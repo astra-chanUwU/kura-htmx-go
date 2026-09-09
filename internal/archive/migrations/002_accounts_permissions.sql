@@ -27,6 +27,9 @@ ALTER TABLE pools ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET
 ALTER TABLE pools ADD COLUMN status TEXT NOT NULL DEFAULT 'published' CHECK(status IN ('draft','published'));
 CREATE INDEX pools_owner_status ON pools(owner_id,status);
 
+-- Version 001 stored installation-local favorites under owner_key. Accounts
+-- provide the first meaningful owner, so replace that unmappable legacy table.
+DROP TABLE IF EXISTS favorites;
 CREATE TABLE favorites (
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
