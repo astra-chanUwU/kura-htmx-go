@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -46,6 +47,15 @@ type PostPage struct {
 	Posts                       []Post
 	Total, Page, PerPage, Pages int
 	Query                       string
+}
+
+type PoolCandidateFilter struct {
+	Source   string
+	PoolSlug string
+	Query    string
+	ViewerID int64
+	Page     int
+	PerPage  int
 }
 
 func Open(path string) (*Store, error) {
@@ -152,6 +162,74 @@ func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) 
 	}
 	defer rows.Close()
 	result := PostPage{Total: total, Page: page, PerPage: perPage, Pages: pages, Query: strings.Join(tags, " ")}
+	for rows.Next() {
+		var p Post
+		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt); err != nil {
+			return PostPage{}, err
+		}
+		result.Posts = append(result.Posts, p)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) PoolCandidates(ctx context.Context, filter PoolCandidateFilter) (PostPage, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PerPage < 1 || filter.PerPage > 100 {
+		filter.PerPage = 100
+	}
+	source := filter.Source
+	if source == "" {
+		source = "all"
+	}
+	tags := normalizeQuery(filter.Query)
+	from := "posts p"
+	where := `p.status='published' AND p.deleted_at IS NULL`
+	args := []any{}
+	order := "p.published_at DESC,p.id DESC"
+	switch source {
+	case "all":
+	case "favorites":
+		from += " JOIN favorites f ON f.post_id=p.id"
+		where += " AND f.user_id=?"
+		args = append(args, filter.ViewerID)
+		order = "f.created_at DESC,p.id DESC"
+	case "pool":
+		var poolID int64
+		err := s.DB.QueryRowContext(ctx, `SELECT id FROM pools WHERE slug=? AND (status='published' OR owner_id=?)`, filter.PoolSlug, filter.ViewerID).Scan(&poolID)
+		if err != nil {
+			return PostPage{}, err
+		}
+		from += " JOIN pool_posts pp ON pp.post_id=p.id"
+		where += " AND pp.pool_id=?"
+		args = append(args, poolID)
+		order = "pp.position ASC,p.id ASC"
+	default:
+		return PostPage{}, errors.New("invalid pool candidate source")
+	}
+	for _, tag := range tags {
+		where += ` AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=?)`
+		args = append(args, tag)
+	}
+	var total int
+	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM `+from+` WHERE `+where, args...).Scan(&total); err != nil {
+		return PostPage{}, err
+	}
+	pages := (total + filter.PerPage - 1) / filter.PerPage
+	if pages == 0 {
+		pages = 1
+	}
+	if filter.Page > pages {
+		filter.Page = pages
+	}
+	qargs := append(append([]any{}, args...), filter.PerPage, (filter.Page-1)*filter.PerPage)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM `+from+` WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, qargs...)
+	if err != nil {
+		return PostPage{}, err
+	}
+	defer rows.Close()
+	result := PostPage{Total: total, Page: filter.Page, PerPage: filter.PerPage, Pages: pages, Query: strings.Join(tags, " ")}
 	for rows.Next() {
 		var p Post
 		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt); err != nil {

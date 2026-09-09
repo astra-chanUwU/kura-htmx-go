@@ -156,16 +156,85 @@ func TestViewerAddsPostToOwnedPoolFromPostPage(t *testing.T) {
 	session, _ := store.NewSession(ctx, &viewer.ID)
 	handler := server.Handler()
 	page := sessionRequest(t, handler, "GET", "/posts/"+strconv.FormatInt(postID, 10), nil, session)
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "Add to pool") || !strings.Contains(page.Body.String(), pool.Name) {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "Add to pool") || !strings.Contains(page.Body.String(), pool.Name) || !strings.Contains(page.Body.String(), `hx-post="/posts/`+strconv.FormatInt(postID, 10)+`/pools"`) {
 		t.Fatalf("post page lacks the visual pool action: status=%d body=%s", page.Code, page.Body.String())
 	}
-	added := sessionRequest(t, handler, "POST", "/posts/"+strconv.FormatInt(postID, 10)+"/pools", url.Values{"pool": {pool.Slug}}, session)
-	if added.Code != http.StatusSeeOther {
-		t.Fatalf("add-to-pool status=%d body=%s", added.Code, added.Body.String())
+	values := url.Values{"pool": {pool.Slug}, "csrf": {session.CSRF}}
+	request := httptest.NewRequest("POST", "/posts/"+strconv.FormatInt(postID, 10)+"/pools", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	added := httptest.NewRecorder()
+	handler.ServeHTTP(added, request)
+	if added.Code != http.StatusOK || added.Header().Get("Location") != "" || !strings.Contains(added.Body.String(), "· added") {
+		t.Fatalf("HTMX add-to-pool response status=%d location=%q body=%s", added.Code, added.Header().Get("Location"), added.Body.String())
 	}
 	updated, err := store.Pool(ctx, pool.Slug, viewer.ID)
 	if err != nil || len(updated.Posts) != 1 || updated.Posts[0].ID != postID {
 		t.Fatalf("post was not added to pool: %+v err=%v", updated, err)
+	}
+}
+
+func TestFavoriteHTMXUpdatesControlWithoutNavigation(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	viewer, _ := store.Register(ctx, "favorite-viewer", "favorite viewer password")
+	result, err := store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,published_at) VALUES('published','originals/favorite.png','thumbs/favorite.jpg','image/png',1,1,1,'favorite-post',CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	session, _ := store.NewSession(ctx, &viewer.ID)
+	handler := server.Handler()
+	page := sessionRequest(t, handler, "GET", "/posts/"+strconv.FormatInt(id, 10), nil, session)
+	if !strings.Contains(page.Body.String(), `hx-post="/posts/`+strconv.FormatInt(id, 10)+`/favorite"`) || strings.Contains(page.Body.String(), "hx-push-url") {
+		t.Fatalf("favorite control is not history-neutral HTMX: %s", page.Body.String())
+	}
+	values := url.Values{"favorite": {"1"}, "csrf": {session.CSRF}}
+	request := httptest.NewRequest("POST", "/posts/"+strconv.FormatInt(id, 10)+"/favorite", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "Remove favorite") {
+		t.Fatalf("HTMX favorite response status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+}
+
+func TestAdminHTMXUpdatesAccountListWithoutNavigation(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	root, _ := store.BootstrapSuperAdmin(ctx, "admin-root", "admin root password")
+	target, _ := store.Register(ctx, "role-target", "role target password")
+	session, _ := store.NewSession(ctx, &root.ID)
+	handler := server.Handler()
+	page := sessionRequest(t, handler, "GET", "/admin/accounts", nil, session)
+	rolePath := "/admin/accounts/" + strconv.FormatInt(target.ID, 10) + "/role"
+	if !strings.Contains(page.Body.String(), `hx-post="`+rolePath+`"`) || strings.Contains(page.Body.String(), "hx-push-url") {
+		t.Fatalf("admin controls are not history-neutral HTMX: %s", page.Body.String())
+	}
+	values := url.Values{"role": {"moderator"}, "csrf": {session.CSRF}}
+	request := httptest.NewRequest("POST", rolePath, strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "role-target") || !strings.Contains(response.Body.String(), "moderator") {
+		t.Fatalf("HTMX admin response status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	transferPath := "/admin/accounts/" + strconv.FormatInt(target.ID, 10) + "/transfer"
+	transferValues := url.Values{"csrf": {session.CSRF}}
+	transferRequest := httptest.NewRequest("POST", transferPath, strings.NewReader(transferValues.Encode()))
+	transferRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	transferRequest.Header.Set("HX-Request", "true")
+	transferRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	transfer := httptest.NewRecorder()
+	handler.ServeHTTP(transfer, transferRequest)
+	formerSuperRolePath := `/admin/accounts/` + strconv.FormatInt(root.ID, 10) + `/role`
+	if transfer.Code != http.StatusOK || strings.Contains(transfer.Body.String(), formerSuperRolePath) {
+		t.Fatalf("super-admin transfer rendered stale privileges: status=%d body=%s", transfer.Code, transfer.Body.String())
 	}
 }
 
@@ -188,6 +257,24 @@ func TestPoolPickerReturnsFilteredPublishedThumbnails(t *testing.T) {
 	body := response.Body.String()
 	if response.Code != http.StatusOK || !strings.Contains(body, `data-post-id="`+strconv.FormatInt(blueID, 10)+`"`) || strings.Contains(body, `data-post-id="`+strconv.FormatInt(redID, 10)+`"`) {
 		t.Fatalf("picker did not filter visual candidates: status=%d body=%s", response.Code, body)
+	}
+}
+
+func TestPoolPickerPreservesSelectedIDsForSourcePicker(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	viewer, _ := store.Register(ctx, "picker-selected", "picker selected password")
+	result, err := store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,published_at) VALUES('published','originals/selected.png','thumbs/selected.jpg','image/png',10,10,1,'selected',CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedID, _ := result.LastInsertId()
+	session, _ := store.NewSession(ctx, &viewer.ID)
+	response := sessionRequest(t, server.Handler(), "GET", "/pools/picker?source=all&post_ids="+strconv.FormatInt(selectedID, 10), nil, session)
+	body := response.Body.String()
+	want := `data-post-id="` + strconv.FormatInt(selectedID, 10) + `"`
+	if response.Code != http.StatusOK || !strings.Contains(body, want+` aria-label="Add image to pool" aria-pressed="true" disabled`) {
+		t.Fatalf("picker did not preserve selected ID: status=%d body=%s", response.Code, body)
 	}
 }
 

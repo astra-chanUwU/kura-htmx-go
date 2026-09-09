@@ -28,6 +28,15 @@ Kura is a small, self-hosted image board developed on a local machine. Favor cle
 - Run `go test ./...` after relevant changes and perform a focused manual smoke check for user-facing flows when practical.
 - Do not claim a behavior was visually or manually verified unless that check was actually performed.
 
+## HTMX and navigation behavior
+
+- Use full-page navigation when a successful action intentionally leads to a different page.
+- Use HTMX fragment updates for frequent inline mutations such as favorites, pool membership, and admin row actions.
+- Inline mutations must not add or replace browser-history entries; do not use `hx-push-url` for them.
+- Preserve ordinary HTML form submission and redirects as a progressive-enhancement fallback.
+- When changing interactive forms, manually verify Back and Forward behavior and report whether that check was performed.
+- Where both paths exist, focused handler tests should cover the HTMX fragment response and retain the non-HTMX redirect fallback.
+
 ## Working style
 
 - Inspect the current checkout, Git status, relevant code, and existing tests before editing.

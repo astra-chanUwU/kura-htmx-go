@@ -38,6 +38,7 @@ type Server struct {
 
 type viewData struct {
 	Title, ActiveNav, Query, Error, Notice, Next string
+	Source, PoolSlug                             string
 	Page                                         archive.PostPage
 	Post                                         archive.Post
 	Posts                                        []archive.Post
@@ -187,7 +188,9 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, sessio
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data viewData) {
 	session := currentSession(r)
-	data.User = session.User
+	if data.User == nil {
+		data.User = session.User
+	}
 	data.CSRF = session.CSRF
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
@@ -275,6 +278,8 @@ func (s *Server) grid(w http.ResponseWriter, r *http.Request) {
 
 func postID(r *http.Request) (int64, error) { return strconv.ParseInt(r.PathValue("id"), 10, 64) }
 
+func isHTMX(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
+
 func (s *Server) visiblePost(r *http.Request) (archive.Post, error) {
 	id, err := postID(r)
 	if err != nil {
@@ -322,6 +327,15 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "favorite could not be updated", http.StatusBadRequest)
 		return
 	}
+	if isHTMX(r) {
+		post, err := s.visiblePost(r)
+		if err != nil {
+			http.Error(w, "favorite could not be refreshed", http.StatusInternalServerError)
+			return
+		}
+		s.render(w, r, "favorite-control", viewData{Post: post})
+		return
+	}
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", id), http.StatusSeeOther)
 }
 
@@ -340,6 +354,20 @@ func (s *Server) addPostToPool(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusForbidden
 		}
 		http.Error(w, "post could not be added to that pool", status)
+		return
+	}
+	if isHTMX(r) {
+		post, err := s.visiblePost(r)
+		if err != nil {
+			http.Error(w, "pool action could not be refreshed", http.StatusInternalServerError)
+			return
+		}
+		pools, err := s.store.OwnedPoolsForPost(r.Context(), user.ID, id)
+		if err != nil {
+			http.Error(w, "pools unavailable", http.StatusInternalServerError)
+			return
+		}
+		s.render(w, r, "pool-control", viewData{Post: post, Pools: pools})
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", id), http.StatusSeeOther)
@@ -524,19 +552,40 @@ func (s *Server) poolEditorData(r *http.Request, pool archive.Pool, postIDs stri
 	if err != nil {
 		return viewData{}, err
 	}
-	return viewData{Pool: pool, PoolPostIDs: postIDs, Page: page, Selected: selectedPostIDs(postIDs)}, nil
+	pools, err := s.store.PoolsForUser(r.Context(), viewerID(r))
+	if err != nil {
+		return viewData{}, err
+	}
+	return viewData{Pool: pool, PoolPostIDs: postIDs, Page: page, Pools: pools, Selected: selectedPostIDs(postIDs), Source: "all"}, nil
 }
 
 func (s *Server) poolPicker(w http.ResponseWriter, r *http.Request) {
-	if s.requireUser(w, r) == nil {
+	user := s.requireUser(w, r)
+	if user == nil {
 		return
 	}
-	page, err := s.store.ListPosts(r.Context(), r.URL.Query().Get("q"), 1, 100)
+	query := r.URL.Query()
+	page, err := s.store.PoolCandidates(r.Context(), archive.PoolCandidateFilter{
+		Source:   query.Get("source"),
+		PoolSlug: query.Get("pool"),
+		Query:    query.Get("q"),
+		ViewerID: user.ID,
+		Page:     1,
+		PerPage:  100,
+	})
+	if err == sql.ErrNoRows {
+		if query.Get("source") == "pool" && query.Get("pool") == "" {
+			s.render(w, r, "pool-picker", viewData{Page: archive.PostPage{}, Selected: selectedPostIDs(query.Get("post_ids")), Source: "pool"})
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		http.Error(w, "posts unavailable", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, r, "pool-picker", viewData{Page: page, Selected: selectedPostIDs(r.URL.Query().Get("post_ids"))})
+	s.render(w, r, "pool-picker", viewData{Page: page, Selected: selectedPostIDs(query.Get("post_ids")), Source: query.Get("source"), PoolSlug: query.Get("pool")})
 }
 
 func (s *Server) registerForm(w http.ResponseWriter, r *http.Request) {
@@ -712,6 +761,20 @@ func (s *Server) adminResult(w http.ResponseWriter, r *http.Request, err error) 
 			status = http.StatusForbidden
 		}
 		http.Error(w, err.Error(), status)
+		return
+	}
+	if isHTMX(r) {
+		users, err := s.store.Users(r.Context())
+		if err != nil {
+			http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+			return
+		}
+		actor, err := s.store.User(r.Context(), currentUser(r).ID)
+		if err != nil {
+			http.Error(w, "account unavailable", http.StatusInternalServerError)
+			return
+		}
+		s.render(w, r, "admin-account-list", viewData{Users: users, User: &actor})
 		return
 	}
 	http.Redirect(w, r, "/admin/accounts", http.StatusSeeOther)
