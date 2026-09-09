@@ -1,0 +1,38 @@
+@font-face{font-family:Atkinson Hyperlegible;src:url('/static/fonts/AtkinsonHyperlegible-Regular.woff2') format('woff2');font-style:normal;font-weight:400;font-display:swap}
+@font-face{font-family:Atkinson Hyperlegible;src:url('/static/fonts/AtkinsonHyperlegible-Bold.woff2') format('woff2');font-style:normal;font-weight:700;font-display:swap}
+/* Core colors: Monkeytype's dark_magic_girl and magic_girl palettes.
+   Supporting text/border colors are contrast-adjusted blends of those colors. */
+:root{color-scheme:dark;--paper:#091f2c;--panel:#071823;--soft:#102b38;--ink:#d8cbed;--muted:#aaacc4;--pink:#f5b1cc;--mint:#93e8d3;--lavender:#a288d9;--accent:#f5b1cc;--link:#93e8d3;--line:#354555;--strong-line:#a288d9;--button-ink:#091f2c;--tag-artist:#f5b1cc;--tag-character:#93e8d3;--tag-copyright:#c6adf2;--shadow:#04131d}
+:root[data-theme=light]{color-scheme:light;--paper:#fff;--panel:#f2f2f2;--soft:#f1fbf8;--ink:#24544e;--muted:#586e69;--pink:#f5b1cc;--mint:#93e8d3;--lavender:#a288d9;--accent:#994365;--link:#087560;--line:#cbded7;--strong-line:#00ac8c;--button-ink:#091f2c;--tag-artist:#994365;--tag-character:#087560;--tag-copyright:#7550a3;--shadow:#e1e9e5}
+*{box-sizing:border-box}
+html{background:var(--paper);color:var(--ink);font:15px/1.45 'Atkinson Hyperlegible',sans-serif;color-scheme:dark}
+html[data-theme=light]{color-scheme:light}
+body{margin:0}
+a{color:var(--link);text-decoration:none;text-underline-offset:3px}a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--strong-line);outline-offset:3px}
+::selection{background:var(--mint);color:#091f2c}
+button,input{font:inherit;border-radius:2px}
+input{min-width:0;padding:5px 7px;background:var(--panel);color:var(--ink);border:1px solid var(--line)}input::placeholder{color:var(--muted);opacity:1}
+button{cursor:pointer;padding:5px 12px;border:1px solid var(--line);background:var(--soft);color:var(--ink)}button:hover{border-color:var(--strong-line)}button[hidden]{display:none}
+.skip-link{position:fixed;top:-60px;left:16px;padding:8px;background:var(--paper);z-index:5}.skip-link:focus{top:8px}
+.site-header{display:flex;align-items:baseline;gap:28px;padding:13px 20px;border-bottom:1px solid var(--line)}
+.brand{color:var(--accent);font-size:26px;font-weight:700;line-height:1.2;letter-spacing:-.5px}.brand:hover{text-decoration:none}
+.site-header nav{display:flex;gap:22px}.site-header a[aria-current=page]{font-weight:700;color:var(--accent)}
+.theme-toggle{margin-left:auto;border:0;padding:0;background:none;color:var(--muted);font-size:13px}.theme-toggle:hover{color:var(--link);text-decoration:underline}
+main{padding:22px 20px}
+.home{max-width:700px;margin:35px auto 0;padding:15px 24px}
+.booru-banner{display:block;width:100%;height:auto;margin:auto}
+.hero-search{max-width:400px;margin:20px auto}.hero-search label{display:block;margin-bottom:5px}.hero-search>div{display:flex;gap:6px}.hero-search input{flex:1;width:100%}
+.browse{display:grid;grid-template-columns:190px minmax(0,1fr);gap:26px}
+.searchbar{display:grid;gap:5px;margin:0 0 22px}.searchbar label{font-weight:700}.searchbar input{width:100%}.searchbar button{justify-self:start;padding:3px 12px}
+.tagrail h2{font-size:16px;margin:0 0 10px}.tagrail h3{font-size:14px;text-transform:capitalize;margin:15px 0 4px}.tagrail a{display:flex;gap:8px;align-items:baseline;padding:1px 0;overflow-wrap:anywhere;font-size:14px}.tagrail small{color:var(--muted);font-size:12px}.tagrail .artist a{color:var(--tag-artist)}.tagrail .character a{color:var(--tag-character)}.tagrail .copyright a{color:var(--tag-copyright)}
+.result-head{display:flex;flex-wrap:wrap;gap:8px;min-height:26px;margin-bottom:8px;font-size:14px}.result-head span{color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px 18px;align-items:end}
+.thumb{height:190px;min-width:0;display:flex;align-items:end;justify-content:center}.thumb img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}.thumb:hover img{outline:2px solid var(--accent);outline-offset:2px}
+.pagination{display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin:28px 0 10px}.pagination a{padding:3px 5px}.pagination [aria-current=page]{color:var(--ink);font-weight:700}
+.empty{padding:20px 0}.empty p{color:var(--muted)}
+.detail{display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px}.detail h1{font-size:21px;margin:16px 0 12px}.detail aside{overflow-wrap:anywhere}.tag{display:block;font-size:14px;padding:2px 0}.tag.artist{color:var(--tag-artist)}.tag.character{color:var(--tag-character)}.tag.copyright{color:var(--tag-copyright)}
+dl{display:grid;grid-template-columns:45px minmax(0,1fr);gap:7px;margin-top:24px;font-size:13px}dt{color:var(--muted)}dd{margin:0}.full{margin:0}.full img{display:block;max-width:100%;max-height:85vh;width:auto;height:auto;margin:0 auto}
+.narrow{max-width:900px;margin:auto;padding-top:32px}h1{font-size:26px;margin:0 0 8px}.lede{color:var(--muted);margin:0 0 24px}.pool-list a{display:grid;grid-template-columns:180px minmax(0,1fr) auto;gap:20px;padding:12px 0;border-bottom:1px solid var(--line)}.pool-list span,.pool-list small{color:var(--muted)}
+@media(max-width:700px){.site-header{padding:12px 16px;gap:20px}.site-header nav{gap:16px}.brand{font-size:23px}.theme-toggle{font-size:12px}main{padding:18px 16px}.home{margin-top:30px}.browse{grid-template-columns:1fr;gap:20px}.tagrail{display:flex;flex-wrap:wrap;gap:0 24px}.searchbar{flex-basis:100%;grid-template-columns:1fr auto;margin-bottom:12px}.searchbar label{grid-column:1/-1}.tagrail h2{display:none}.tagrail section{min-width:100px}.tagrail h3{margin-top:8px}.grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:14px}.thumb{height:170px}.detail{grid-template-columns:1fr}.detail aside{order:2}.full img{max-height:75vh}.pool-list a{grid-template-columns:1fr auto;gap:5px}.pool-list span{grid-row:2;grid-column:1/-1}.hero-search{margin-top:16px}}
+@media(max-width:360px){.site-header{gap:14px;padding-inline:12px}.site-header nav{gap:12px}.theme-toggle{font-size:11px}.home{padding-inline:16px}}

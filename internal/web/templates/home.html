@@ -1,0 +1,5 @@
+{{define "home"}}{{template "head" .}}{{template "nav" .}}
+<main id="main" class="home">
+<img class="booru-banner" src="/static/images/kura-banner.png" width="1634" height="962" alt="Kura.xyz angel banner">
+<form action="/posts" class="hero-search"><label for="home-q">Search posts</label><div><input id="home-q" name="q" placeholder="space-separated tags"><button>Search</button></div></form>
+</main>{{template "foot" .}}{{end}}
