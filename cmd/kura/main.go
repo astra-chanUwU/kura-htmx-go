@@ -28,6 +28,7 @@ func main() {
 	dbPath := flag.String("db", "var/kura.db", "SQLite database path")
 	media := flag.String("media", "var/media", "media root")
 	seed := flag.Bool("seed", false, "add demo posts if empty")
+	bootstrapUser := flag.String("bootstrap-super-admin", "", "create the initial super admin using KURA_BOOTSTRAP_PASSWORD")
 	flag.Parse()
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0755); err != nil {
 		log.Fatal(err)
@@ -40,6 +41,17 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
+	if *bootstrapUser != "" {
+		password := os.Getenv("KURA_BOOTSTRAP_PASSWORD")
+		if password == "" {
+			log.Fatal("KURA_BOOTSTRAP_PASSWORD is required with -bootstrap-super-admin")
+		}
+		user, err := store.BootstrapSuperAdmin(context.Background(), *bootstrapUser, password)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("created initial super admin %q", user.Username)
+	}
 	if *seed {
 		if err := seedDemo(context.Background(), store, *media); err != nil {
 			log.Fatal(err)
@@ -49,7 +61,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Kura listening on http://localhost%s", *addr)
+	displayAddr := *addr
+	if strings.HasPrefix(displayAddr, ":") {
+		displayAddr = "localhost" + displayAddr
+	}
+	log.Printf("Kura listening on http://%s", displayAddr)
 	log.Fatal(http.ListenAndServe(*addr, server.Handler()))
 }
 

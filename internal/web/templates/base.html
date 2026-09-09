@@ -13,7 +13,8 @@
 {{define "nav"}}
 <header class="site-header">
 <a class="brand" href="/"{{if eq .ActiveNav "home"}} aria-current="page"{{end}}>Kura</a>
-<nav aria-label="Primary"><a href="/posts"{{if eq .ActiveNav "posts"}} aria-current="page"{{end}}>Posts</a><a href="/pools"{{if eq .ActiveNav "pools"}} aria-current="page"{{end}}>Pools</a><a href="/random">Random</a></nav>
+<nav aria-label="Primary"><a href="/posts"{{if eq .ActiveNav "posts"}} aria-current="page"{{end}}>Posts</a><a href="/pools"{{if eq .ActiveNav "pools"}} aria-current="page"{{end}}>Pools</a><a href="/random">Random</a>{{if .User}}{{if .User.CanUpload}}<a href="/uploads/new"{{if eq .ActiveNav "upload"}} aria-current="page"{{end}}>Upload</a>{{end}}{{if .User.CanAdminister}}<a href="/admin/accounts"{{if eq .ActiveNav "admin"}} aria-current="page"{{end}}>Admin</a>{{end}}{{end}}</nav>
+<div class="session-nav">{{if .User}}<a href="/account"{{if eq .ActiveNav "account"}} aria-current="page"{{end}}>{{.User.Username}}</a><form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link-button">Sign out</button></form>{{else}}<a href="/login"{{if eq .ActiveNav "account"}} aria-current="page"{{end}}>Sign in</a><a href="/register">Register</a>{{end}}</div>
 <button class="theme-toggle" type="button" data-theme-toggle aria-label="Light theme" aria-pressed="false" hidden>Light theme</button>
 </header>{{end}}
 {{define "foot"}}</body></html>{{end}}

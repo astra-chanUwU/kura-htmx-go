@@ -8,15 +8,16 @@
 - Open post detail pages with image metadata, source, tags, pool membership, and previous/next keyboard navigation.
 - Jump to a random published post.
 - Browse pools/collections and their ordered posts.
-- Favorite posts locally (single-owner installation; authentication can be added when needed).
-- Upload from file, drag/drop, or clipboard through an admin screen.
+- Register and sign in with local accounts; keep favorites private to each viewer.
+- Create owned pools as owner-only drafts or publicly visible collections; add from post pages or use a searchable thumbnail picker to select and reorder images.
+- Upload from file, drag/drop, or clipboard as a moderator or admin.
 - Preview before publish; save drafts and publish deliberately.
 - Extract MIME type, dimensions, file size, and SHA-256; reject duplicates by hash.
 - Generate thumbnails on disk.
-- Autocomplete tags and surface recently used tags.
-- Bulk-add or remove tags from a selected set when the basic upload flow is sound.
+- Moderate tags, sources, and draft/published state.
+- Enforce moderator upload ownership, admin deletion, and super-admin-only admin role changes.
 
-The first implemented slice is browsing: homepage, post index, categorized tag rail, filtering, pagination, post detail, pools, random navigation, schema, and local demo data. Upload/admin is the next slice.
+The implemented vertical slice covers browsing, identity, role boundaries, uploads, favorites, pool visibility, and account administration. Tag autocomplete and bulk tagging remain later usability work once the core paths have more day-to-day use.
 
 ## Explicit non-goals
 
@@ -38,8 +39,15 @@ The first implemented slice is browsing: homepage, post index, categorized tag r
 | `GET /random` | Redirect to a random published post |
 | `GET /pools` | Pool index |
 | `GET /pools/{slug}` | Ordered posts in a pool |
-| `GET /admin/uploads/new` | Future upload/draft screen |
-| `POST /admin/uploads` | Future ingest and preview |
-| `POST /admin/posts/{id}/publish` | Future publish action |
+| `GET/POST /register`, `GET/POST /login` | Local account access |
+| `GET /account` | Private favorites and owned pools |
+| `GET /pools/new`, `POST /pools` | Create a draft or published pool |
+| `GET/POST /pools/{slug}/edit` | Owner-only pool editing |
+| `GET /pools/picker` | HTMX thumbnail search for the visual pool editor |
+| `POST /posts/{id}/pools` | Add the current post to an owned pool |
+| `GET /uploads/new`, `POST /uploads` | Moderator image ingestion |
+| `GET/POST /posts/{id}/edit` | Moderator metadata and publication state |
+| `POST /posts/{id}/delete` | Ownership-aware logical deletion |
+| `GET /admin/accounts` | Admin account and role management |
 
 Query syntax in v1 is intentionally small: normalized tag names separated by spaces mean AND. A later syntax must earn its parsing and UI cost.

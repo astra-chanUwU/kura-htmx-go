@@ -22,6 +22,9 @@ type Post struct {
 	Width, Height                                 int
 	ByteSize                                      int64
 	SHA256, Source, PublishedAt                   string
+	UploaderID                                    int64
+	Uploader                                      string
+	Favorite                                      bool
 	Tags                                          []Tag
 }
 
@@ -31,9 +34,13 @@ type Tag struct {
 	Count                       int
 }
 type Pool struct {
-	ID                      int64
-	Slug, Name, Description string
-	Count                   int
+	ID                              int64
+	Slug, Name, Description, Status string
+	OwnerID                         int64
+	Owner                           string
+	Count                           int
+	ContainsPost                    bool
+	Posts                           []Post
 }
 type PostPage struct {
 	Posts                       []Post
@@ -121,7 +128,7 @@ func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) 
 		perPage = 24
 	}
 	tags := normalizeQuery(query)
-	where := `p.status='published'`
+	where := `p.status='published' AND p.deleted_at IS NULL`
 	args := []any{}
 	for _, tag := range tags {
 		where += ` AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=?)`
@@ -156,10 +163,21 @@ func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) 
 }
 
 func (s *Store) Post(ctx context.Context, id int64) (Post, error) {
+	return s.PostForUser(ctx, id, 0, false)
+}
+
+func (s *Store) PostForUser(ctx context.Context, id, viewerID int64, canModerate bool) (Post, error) {
 	var p Post
-	err := s.DB.QueryRowContext(ctx, `SELECT id,status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source,COALESCE(published_at,'') FROM posts WHERE id=? AND status='published'`, id).Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt)
+	var uploader sql.NullInt64
+	err := s.DB.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND (p.status='published' OR p.uploader_id=? OR ?)`, id, viewerID, canModerate).Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &uploader, &p.Uploader)
 	if err != nil {
 		return p, err
+	}
+	if uploader.Valid {
+		p.UploaderID = uploader.Int64
+	}
+	if viewerID != 0 {
+		_ = s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM favorites WHERE post_id=? AND user_id=?)`, id, viewerID).Scan(&p.Favorite)
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category FROM tags t JOIN post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=? ORDER BY t.category,t.name`, id)
 	if err != nil {
@@ -177,7 +195,7 @@ func (s *Store) Post(ctx context.Context, id int64) (Post, error) {
 }
 
 func (s *Store) Tags(ctx context.Context) ([]Tag, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category,count(p.id) FROM tags t LEFT JOIN post_tags pt ON pt.tag_id=t.id LEFT JOIN posts p ON p.id=pt.post_id AND p.status='published' GROUP BY t.id HAVING count(p.id)>0 ORDER BY t.category,count(p.id) DESC,t.name LIMIT 100`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category,count(p.id) FROM tags t LEFT JOIN post_tags pt ON pt.tag_id=t.id LEFT JOIN posts p ON p.id=pt.post_id AND p.status='published' AND p.deleted_at IS NULL GROUP BY t.id HAVING count(p.id)>0 ORDER BY t.category,count(p.id) DESC,t.name LIMIT 100`)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +211,10 @@ func (s *Store) Tags(ctx context.Context) ([]Tag, error) {
 	return out, rows.Err()
 }
 func (s *Store) Pools(ctx context.Context) ([]Pool, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT po.id,po.slug,po.name,po.description,count(pp.post_id) FROM pools po LEFT JOIN pool_posts pp ON pp.pool_id=po.id GROUP BY po.id ORDER BY po.name`)
+	return s.PoolsForUser(ctx, 0)
+}
+func (s *Store) PoolsForUser(ctx context.Context, viewerID int64) ([]Pool, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,COALESCE(po.owner_id,0),COALESCE(u.username,''),count(CASE WHEN p.status='published' AND p.deleted_at IS NULL THEN 1 END) FROM pools po LEFT JOIN users u ON u.id=po.owner_id LEFT JOIN pool_posts pp ON pp.pool_id=po.id LEFT JOIN posts p ON p.id=pp.post_id WHERE po.status='published' OR po.owner_id=? GROUP BY po.id ORDER BY po.status,po.name`, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +222,7 @@ func (s *Store) Pools(ctx context.Context) ([]Pool, error) {
 	var out []Pool
 	for rows.Next() {
 		var p Pool
-		if err = rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &p.Count); err != nil {
+		if err = rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &p.Status, &p.OwnerID, &p.Owner, &p.Count); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -210,6 +231,6 @@ func (s *Store) Pools(ctx context.Context) ([]Pool, error) {
 }
 func (s *Store) RandomPostID(ctx context.Context) (int64, error) {
 	var id int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id FROM posts WHERE status='published' ORDER BY random() LIMIT 1`).Scan(&id)
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM posts WHERE status='published' AND deleted_at IS NULL ORDER BY random() LIMIT 1`).Scan(&id)
 	return id, err
 }

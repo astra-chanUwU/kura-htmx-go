@@ -12,7 +12,7 @@ Kura is a fast, self-hostable image archive: the density and directness of a boo
 
 ## Current vertical slice
 
-The current build includes a sparse homepage, dense post index, categorized tag rail, tag filtering, pagination, random-post navigation, post detail pages, pools, local demo data, and focused query tests. The schema also establishes drafts, sources, hashes, favorites, pools, and tag categories so upload/admin work can land without reshaping the browsing model.
+The current build includes public browsing/search, local accounts, private favorites, owned draft/published pools, moderator uploads and metadata tools, and account/role administration. Viewers add images to pools from a post or through a searchable thumbnail picker with visual removal and ordering—database IDs never need to be entered. Uploads are hash-named beneath the configured media root, thumbnails are generated during the request, and duplicate files are rejected before metadata is created. Deleting a post hides its metadata but deliberately retains its files for explicit maintenance.
 
 See [docs/product.md](docs/product.md) for v1 scope and routes, and [docs/architecture.md](docs/architecture.md) for the architecture and data model.
 
@@ -22,7 +22,7 @@ Requires Go 1.23 or newer.
 
 ```sh
 go mod download
-go run ./cmd/kura -seed
+KURA_BOOTSTRAP_PASSWORD='use-a-long-password' go run ./cmd/kura -bootstrap-super-admin yourname -seed
 ```
 
 Open <http://localhost:8080>. The default database and generated demo images live in `./var/`. Override them with `-db`, `-media`, or `-addr`.
@@ -31,7 +31,7 @@ Open <http://localhost:8080>. The default database and generated demo images liv
 go test ./...
 ```
 
-The server applies numbered embedded SQL migrations on startup. `-seed` is idempotent and adds a small set of generated local demo images only when the archive is empty.
+The bootstrap flag is a one-time operation and refuses to replace an existing super admin. On later starts, omit the environment variable and bootstrap flag. The server applies numbered embedded SQL migrations on startup. `-seed` is idempotent and adds generated local demo images; it never grants upload or admin permissions.
 
 ## Folder map
 
@@ -41,6 +41,11 @@ The server applies numbered embedded SQL migrations on startup. `-seed` is idemp
 - `internal/archive/migrations`: ordered schema changes embedded into the binary
 - `var`: local runtime data (ignored by Git)
 
-## Next practical slice
+## Account roles
 
-Build the upload/admin flow: drag/drop and paste, preview, MIME/dimension/SHA-256 extraction, duplicate warning, tag autocomplete/recent tags, thumbnail generation, save draft, and publish. JPEG/PNG/WebP decoding should be selected intentionally when that work starts; the demo seed currently generates local PNG originals and thumbnails.
+- Viewers can favorite published posts and create private-draft or public pools.
+- Moderators can also upload JPEG, PNG, and GIF images, edit metadata, and delete their own uploads.
+- Admins can delete any upload and manage viewers and moderators.
+- The single super admin can additionally promote/demote admins and explicitly transfer super-admin authority.
+
+Sessions are stored in SQLite. Cookies are HTTP-only and SameSite=Lax; they are marked Secure automatically when Kura is served over TLS, while remaining usable on local plain HTTP. Every state-changing HTML form requires its session's CSRF token.
