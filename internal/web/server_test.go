@@ -340,6 +340,9 @@ func TestAuthenticationAndAccountSecurityUIExposePasskeyFirstFlows(t *testing.T)
 			t.Fatalf("account security UI missing %q: %s", want, body)
 		}
 	}
+	if !strings.Contains(body, `class="account-status password-enabled"`) {
+		t.Fatalf("password-enabled state is not semantically styled: %s", body)
+	}
 	if strings.Contains(body, "hx-push-url") {
 		t.Fatal("account inline security actions change browser history")
 	}
@@ -385,6 +388,42 @@ func TestBrowseSearchControlIsCompact(t *testing.T) {
 	for _, want := range []string{`class="visually-hidden" for="q">Search tags</label>`, `placeholder="search tags…"`, `<button class="search-submit">Go</button>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("browse search control missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestAccountUsesFramedEditorialSections(t *testing.T) {
+	server, store := testServer(t)
+	user, err := store.Register(context.Background(), "account-layout", "account layout password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.NewSession(context.Background(), &user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := sessionRequest(t, server.Handler(), "GET", "/account", nil, session)
+	body := page.Body.String()
+	for _, want := range []string{`class="narrow account-page"`, `class="security-panel account-section"`, `class="account-grid account-sections"`, `class="account-section"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("account page missing %q: %s", want, body)
+		}
+	}
+	css := httptest.NewRecorder()
+	server.Handler().ServeHTTP(css, httptest.NewRequest("GET", "/static/kura.css", nil))
+	if !strings.Contains(css.Body.String(), ".account-page{max-width:680px;margin:22px auto;background:none;border:0;padding:0") {
+		t.Fatalf("account page still uses a framed dashboard surface: %s", css.Body.String())
+	}
+}
+
+func TestRecoveryUsesAuthPageStructure(t *testing.T) {
+	server, _ := testServer(t)
+	page := httptest.NewRecorder()
+	server.Handler().ServeHTTP(page, httptest.NewRequest("GET", "/recover", nil))
+	body := page.Body.String()
+	for _, want := range []string{`class="form-page auth-page"`, `class="auth-method passkey-first"`, `class="stack auth-fields"`, `class="auth-divider"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("recovery page missing %q: %s", want, body)
 		}
 	}
 }
@@ -657,11 +696,42 @@ func TestUploadFormDefaultsToPublishedAndUsesWorkSurface(t *testing.T) {
 	}
 	page := sessionRequest(t, server.Handler(), "GET", "/uploads/new", nil, session)
 	body := page.Body.String()
-	if page.Code != http.StatusOK || !strings.Contains(body, `<main id="main" class="form-page wide-form upload-page">`) || !strings.Contains(body, `<label class="dropzone"`) {
+	if page.Code != http.StatusOK || !strings.Contains(body, `<main id="main" class="form-page upload-page">`) || !strings.Contains(body, `<section class="upload-section">`) || !strings.Contains(body, `<label class="dropzone"`) {
 		t.Fatalf("upload form is missing its work-surface structure: status=%d body=%s", page.Code, body)
+	}
+	if strings.Contains(body, `class="form-page wide-form upload-page"`) || strings.Contains(body, `class="upload-page framed-surface"`) {
+		t.Fatalf("upload form still uses the old framed layout: %s", body)
+	}
+	if !strings.Contains(body, `<div class="upload-fields" aria-label="Image details">`) || !strings.Contains(body, `<button class="primary-action" type="submit">Store image</button>`) {
+		t.Fatalf("upload form is missing its clean details and action structure: %s", body)
 	}
 	if !strings.Contains(body, `<option value="published" selected>Published — visible immediately</option>`) {
 		t.Fatalf("upload form does not default to published: %s", body)
+	}
+}
+
+func TestNewPoolUsesCleanFormHierarchy(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, err := store.Register(ctx, "pool-layout", "pool layout password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.NewSession(ctx, &user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := sessionRequest(t, server.Handler(), "GET", "/pools/new", nil, session)
+	body := page.Body.String()
+	for _, want := range []string{`<main id="main" class="pool-editor form-page pool-form-page">`, `<header class="pool-header">`, `<form id="pool-form"`, `<section class="pool-metadata">`, `<section class="selected-section pool-section">`, `<section class="picker-section pool-section">`, `<button form="pool-form" class="primary-action" type="submit">Save pool</button>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("new pool page missing %q: %s", want, body)
+		}
+	}
+	css := httptest.NewRecorder()
+	server.Handler().ServeHTTP(css, httptest.NewRequest("GET", "/static/kura.css", nil))
+	if !strings.Contains(css.Body.String(), ".pool-form-page{max-width:680px;margin:22px auto") {
+		t.Fatalf("new pool page is missing the clean form layout: %s", css.Body.String())
 	}
 }
 
