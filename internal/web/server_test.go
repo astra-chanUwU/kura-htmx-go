@@ -976,6 +976,12 @@ func TestNavigationMarksOnlyTheCurrentSection(t *testing.T) {
 			request := httptest.NewRequest("GET", "/", nil)
 			s.render(recorder, request, tt.template, viewData{Title: "Kura", ActiveNav: tt.activeNav})
 			html := recorder.Body.String()
+			if tt.template == "home" {
+				if strings.Contains(html, `class="site-header"`) || strings.Contains(html, `aria-current="page"`) {
+					t.Errorf("home should not render the global navigation")
+				}
+				return
+			}
 			if !strings.Contains(html, tt.current) {
 				t.Errorf("current navigation item missing %q", tt.current)
 			}

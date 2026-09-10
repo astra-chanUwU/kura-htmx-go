@@ -1,5 +1,13 @@
-{{define "home"}}{{template "head" .}}{{template "nav" .}}
+{{define "home"}}{{template "head" .}}
 <main id="main" class="home">
-<img class="booru-banner" src="/static/images/kura-banner.png" width="1634" height="962" alt="Kura.xyz angel banner">
-<form action="/posts" class="hero-search"><label for="home-q">Search posts</label><div><input id="home-q" name="q" placeholder="space-separated tags"><button>Search</button></div></form>
+<div class="home-shell">
+<img class="booru-banner" src="/static/images/kura-banner.png" width="1634" height="962" alt="Kura angel mascot">
+<div class="home-links"><a href="/posts">Browse</a><a href="/pools">Pools</a><a href="/random">Random</a>{{if .User}}<a href="/account">{{.User.Username}}</a>{{else}}<a href="/login">Sign in</a>{{end}}<button class="home-theme-toggle" type="button" data-theme-toggle aria-label="Light theme" aria-pressed="false" hidden>Light theme</button></div>
+<form action="/posts" class="hero-search"><label class="visually-hidden" for="home-q">Search posts</label><div><input id="home-q" name="q" placeholder="space-separated tags" autofocus><button>Search</button></div></form>
+<section class="home-stats" aria-label="Kura archive details">
+<p class="home-count">48 posts indexed</p>
+<div class="home-tech" aria-hidden="true"><img src="/static/images/mascot-4.gif" alt=""><img src="/static/images/mascot-9.gif" alt=""><img src="/static/images/mascot-5.gif" alt=""><img src="/static/images/mascot-2.gif" alt=""><img src="/static/images/mascot-0.gif" alt=""></div>
+<p class="home-tech-note">Built with <a href="https://go.dev/" target="_blank" rel="noreferrer">Go</a>, <a href="https://sqlite.org/" target="_blank" rel="noreferrer">SQLite</a>, <a href="https://htmx.org/" target="_blank" rel="noreferrer">HTMX</a>, and <a href="https://pkg.go.dev/html/template" target="_blank" rel="noreferrer">Go templates</a>.</p>
+</section>
+</div>
 </main>{{template "foot" .}}{{end}}
