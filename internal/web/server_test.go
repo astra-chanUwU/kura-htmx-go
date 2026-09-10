@@ -677,6 +677,31 @@ func TestViewerAddsPostToOwnedPoolFromPostPage(t *testing.T) {
 	}
 }
 
+func TestActionStylesAreTextFirst(t *testing.T) {
+	server, _ := testServer(t)
+	page := httptest.NewRecorder()
+	server.Handler().ServeHTTP(page, httptest.NewRequest("GET", "/static/kura.css", nil))
+	css := page.Body.String()
+	if page.Code != http.StatusOK {
+		t.Fatalf("stylesheet status=%d", page.Code)
+	}
+	if !strings.Contains(css, "button{cursor:pointer;padding:0;border:0;background:none") {
+		t.Fatalf("buttons do not use the text-first base treatment: %s", css)
+	}
+	if !strings.Contains(css, "button:hover{color:var(--link);text-decoration:none;background:var(--soft)") {
+		t.Fatalf("buttons do not have a visible hover treatment: %s", css)
+	}
+	if !strings.Contains(css, ".button{display:inline-block;padding:0;border:0;background:none") {
+		t.Fatalf("button links do not use the text-first treatment: %s", css)
+	}
+	if !strings.Contains(css, "a:hover{color:var(--accent);text-decoration:none}") {
+		t.Fatalf("links still underline on hover: %s", css)
+	}
+	if !strings.Contains(css, ".pool-action button{color:var(--mint);font-weight:700") {
+		t.Fatalf("pool action does not have a distinct text treatment: %s", css)
+	}
+}
+
 func TestFavoriteHTMXUpdatesControlWithoutNavigation(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()
