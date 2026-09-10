@@ -47,3 +47,12 @@ func TestSeedDemoIncludesAllEmbeddedImageFormats(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupURLUsesConfiguredOriginOrLocalListenAddress(t *testing.T) {
+	if got := setupURL(":9090", "", "one-use-token"); got != "http://localhost:9090/setup?token=one-use-token" {
+		t.Fatalf("local setup URL = %q", got)
+	}
+	if got := setupURL(":9090", "https://kura.example,https://other.example", "token"); got != "https://kura.example/setup?token=token" {
+		t.Fatalf("configured setup URL = %q", got)
+	}
+}

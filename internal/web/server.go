@@ -5,17 +5,22 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"kura/internal/archive"
 	mediafiles "kura/internal/media"
 )
@@ -30,14 +35,58 @@ type contextKey int
 const sessionContext contextKey = iota
 
 type Server struct {
-	store     *archive.Store
-	mediaRoot string
-	media     mediafiles.Ingestor
-	templates *template.Template
+	store           *archive.Store
+	mediaRoot       string
+	media           mediafiles.Ingestor
+	templates       *template.Template
+	passkeys        passkeyCeremonies
+	loginLimiter    *attemptLimiter
+	recoveryLimiter *attemptLimiter
+}
+
+type passkeyCeremonies interface {
+	BeginRegistration(archive.User) (*protocol.CredentialCreation, *webauthn.SessionData, error)
+	FinishRegistration(archive.User, webauthn.SessionData, *http.Request) (*webauthn.Credential, error)
+	BeginDiscoverableLogin() (*protocol.CredentialAssertion, *webauthn.SessionData, error)
+	FinishPasskeyLogin(webauthn.DiscoverableUserHandler, webauthn.SessionData, *http.Request) (webauthn.User, *webauthn.Credential, error)
+	BeginLogin(archive.User) (*protocol.CredentialAssertion, *webauthn.SessionData, error)
+	FinishLogin(archive.User, webauthn.SessionData, *http.Request) (*webauthn.Credential, error)
+}
+
+type goPasskeys struct{ instance *webauthn.WebAuthn }
+
+func (p goPasskeys) BeginRegistration(user archive.User) (*protocol.CredentialCreation, *webauthn.SessionData, error) {
+	return p.instance.BeginRegistration(user,
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+		webauthn.WithExclusions(webauthn.Credentials(user.WebAuthnCredentials()).CredentialDescriptors()),
+		webauthn.WithExtensions(webauthn.WithExtensionCredProps()),
+	)
+}
+func (p goPasskeys) FinishRegistration(user archive.User, session webauthn.SessionData, r *http.Request) (*webauthn.Credential, error) {
+	return p.instance.FinishRegistration(user, session, r)
+}
+func (p goPasskeys) BeginDiscoverableLogin() (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	return p.instance.BeginDiscoverableLogin(webauthn.WithUserVerification(protocol.VerificationRequired))
+}
+func (p goPasskeys) FinishPasskeyLogin(handler webauthn.DiscoverableUserHandler, session webauthn.SessionData, r *http.Request) (webauthn.User, *webauthn.Credential, error) {
+	return p.instance.FinishPasskeyLogin(handler, session, r)
+}
+func (p goPasskeys) BeginLogin(user archive.User) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	return p.instance.BeginLogin(user, webauthn.WithUserVerification(protocol.VerificationRequired))
+}
+func (p goPasskeys) FinishLogin(user archive.User, session webauthn.SessionData, r *http.Request) (*webauthn.Credential, error) {
+	return p.instance.FinishLogin(user, session, r)
+}
+
+type AuthConfig struct {
+	RPID    string
+	Origins []string
 }
 
 type viewData struct {
 	Title, ActiveNav, Query, Error, Notice, Next string
+	RecoveryCode                                 string
+	SetupToken                                   string
 	Source, PoolSlug                             string
 	Page                                         archive.PostPage
 	Post                                         archive.Post
@@ -48,6 +97,7 @@ type viewData struct {
 	Pool                                         archive.Pool
 	Users                                        []archive.User
 	User                                         *archive.User
+	Security                                     archive.AccountSecurity
 	CSRF                                         string
 	PostTags                                     string
 	PoolPostIDs                                  string
@@ -55,6 +105,26 @@ type viewData struct {
 }
 
 func New(store *archive.Store, mediaRoot string) (*Server, error) {
+	rpID := os.Getenv("KURA_RP_ID")
+	if rpID == "" {
+		rpID = "localhost"
+	}
+	origins := []string{"http://localhost:8080"}
+	if raw := os.Getenv("KURA_ORIGINS"); raw != "" {
+		origins = nil
+		for _, origin := range strings.Split(raw, ",") {
+			if origin = strings.TrimSpace(origin); origin != "" {
+				origins = append(origins, origin)
+			}
+		}
+	}
+	return NewWithAuth(store, mediaRoot, AuthConfig{RPID: rpID, Origins: origins})
+}
+
+func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Server, error) {
+	if err := validateAuthConfig(auth); err != nil {
+		return nil, err
+	}
 	funcs := template.FuncMap{
 		"listCategories": func() []string { return []string{"artist", "character", "copyright", "general", "meta"} },
 		"media":          func(p string) string { return "/media/" + strings.TrimLeft(p, "/") },
@@ -80,12 +150,55 @@ func New(store *archive.Store, mediaRoot string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: store, mediaRoot: mediaRoot, media: mediafiles.Ingestor{Root: mediaRoot, Store: store}, templates: t}, nil
+	passkeys, err := webauthn.New(&webauthn.Config{
+		RPDisplayName: "Kura",
+		RPID:          auth.RPID,
+		RPOrigins:     auth.Origins,
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			ResidentKey:      protocol.ResidentKeyRequirementRequired,
+			UserVerification: protocol.VerificationRequired,
+		},
+		Timeouts: webauthn.TimeoutsConfig{
+			Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: 5 * time.Minute},
+			Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: 5 * time.Minute},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Server{
+		store: store, mediaRoot: mediaRoot, media: mediafiles.Ingestor{Root: mediaRoot, Store: store}, templates: t,
+		passkeys: goPasskeys{passkeys}, loginLimiter: newAttemptLimiter(5, time.Minute), recoveryLimiter: newAttemptLimiter(5, 5*time.Minute),
+	}, nil
+}
+
+func validateAuthConfig(auth AuthConfig) error {
+	if auth.RPID == "" || len(auth.Origins) == 0 {
+		return errors.New("WebAuthn RP ID and allowed origins are required")
+	}
+	for _, raw := range auth.Origins {
+		origin, err := url.Parse(raw)
+		if err != nil || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || (origin.Path != "" && origin.Path != "/") {
+			return fmt.Errorf("invalid WebAuthn origin %q", raw)
+		}
+		host := origin.Hostname()
+		if !strings.EqualFold(host, auth.RPID) && !strings.HasSuffix(strings.ToLower(host), "."+strings.ToLower(auth.RPID)) {
+			return fmt.Errorf("WebAuthn origin %q is outside RP ID %q", raw, auth.RPID)
+		}
+		if origin.Scheme != "https" && !(origin.Scheme == "http" && strings.EqualFold(auth.RPID, "localhost")) {
+			return fmt.Errorf("WebAuthn origin %q must use HTTPS", raw)
+		}
+	}
+	return nil
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.home)
+	mux.HandleFunc("GET /setup", s.setupForm)
+	mux.HandleFunc("POST /setup/password", s.setupPassword)
+	mux.HandleFunc("POST /setup/passkey/begin", s.setupPasskeyBegin)
+	mux.HandleFunc("POST /setup/passkey/finish", s.setupPasskeyFinish)
 	mux.HandleFunc("GET /posts", s.posts)
 	mux.HandleFunc("GET /posts/grid", s.grid)
 	mux.HandleFunc("GET /posts/{id}", s.post)
@@ -106,8 +219,25 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /register", s.register)
 	mux.HandleFunc("GET /login", s.loginForm)
 	mux.HandleFunc("POST /login", s.login)
+	mux.HandleFunc("GET /recover", s.recoveryForm)
+	mux.HandleFunc("POST /recover", s.recoverAccount)
+	mux.HandleFunc("POST /recover/passkey/begin", s.recoverPasskeyBegin)
+	mux.HandleFunc("POST /recover/passkey/finish", s.recoverPasskeyFinish)
+	mux.HandleFunc("POST /auth/passkeys/register/begin", s.passkeyRegistrationBegin)
+	mux.HandleFunc("POST /auth/passkeys/register/finish", s.passkeyRegistrationFinish)
+	mux.HandleFunc("POST /auth/passkeys/login/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("POST /auth/passkeys/login/finish", s.passkeyLoginFinish)
+	mux.HandleFunc("POST /auth/passkeys/fresh/begin", s.passkeyFreshBegin)
+	mux.HandleFunc("POST /auth/passkeys/fresh/finish", s.passkeyFreshFinish)
+	mux.HandleFunc("POST /account/passkeys/add/begin", s.passkeyAddBegin)
+	mux.HandleFunc("POST /account/passkeys/add/finish", s.passkeyAddFinish)
+	mux.HandleFunc("POST /account/passkeys/{id}/remove", s.passkeyRemove)
 	mux.HandleFunc("POST /logout", s.logout)
 	mux.HandleFunc("GET /account", s.account)
+	mux.HandleFunc("POST /account/password/remove", s.removePassword)
+	mux.HandleFunc("POST /account/password", s.changePassword)
+	mux.HandleFunc("POST /account/recovery/replace", s.replaceRecoveryCode)
+	mux.HandleFunc("POST /account/sessions/revoke", s.revokeOtherSessions)
 	mux.HandleFunc("GET /uploads/new", s.newUpload)
 	mux.HandleFunc("GET /admin/uploads/new", s.newUpload)
 	mux.HandleFunc("POST /uploads", s.upload)
@@ -165,7 +295,10 @@ func (s *Server) withCSRF(next http.Handler) http.Handler {
 				_ = r.ParseForm()
 			}
 			want := currentSession(r).CSRF
-			got := r.FormValue("csrf")
+			got := r.Header.Get("X-CSRF-Token")
+			if got == "" {
+				got = r.FormValue("csrf")
+			}
 			if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
 				http.Error(w, "invalid CSRF token", http.StatusForbidden)
 				return
@@ -227,6 +360,114 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) *archive.U
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "home", viewData{Title: "Kura — your image archive", ActiveNav: "home"})
+}
+
+func (s *Server) setupForm(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if !s.store.BootstrapTokenValid(r.Context(), token) {
+		http.Error(w, archive.ErrInvalidBootstrap.Error(), http.StatusGone)
+		return
+	}
+	s.render(w, r, "setup", viewData{Title: "Set up Kura — Kura", ActiveNav: "account", SetupToken: token})
+}
+
+func (s *Server) setupPassword(w http.ResponseWriter, r *http.Request) {
+	user, err := s.store.BootstrapSuperAdminWithPassword(r.Context(), r.FormValue("token"), r.FormValue("username"), r.FormValue("password"))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, archive.ErrInvalidBootstrap) {
+			status = http.StatusGone
+		}
+		w.WriteHeader(status)
+		s.render(w, r, "setup", viewData{Title: "Set up Kura — Kura", ActiveNav: "account", SetupToken: r.FormValue("token"), Error: err.Error()})
+		return
+	}
+	if err = s.replaceSession(w, r, user.ID); err != nil {
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
+}
+
+func (s *Server) setupPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("X-Kura-Bootstrap")
+	if !s.store.BootstrapTokenValid(r.Context(), token) {
+		http.Error(w, archive.ErrInvalidBootstrap.Error(), http.StatusGone)
+		return
+	}
+	var input struct {
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Password string `json:"password"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	user, err := archive.NewPasskeyRegistrationUser(input.Username)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" || len(input.Name) > 64 {
+		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		return
+	}
+	passwordHash := ""
+	if input.Password != "" {
+		passwordHash, err = archive.PreparePassword(input.Password)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	creation, session, err := s.passkeys.BeginRegistration(user)
+	if err != nil {
+		http.Error(w, "passkey setup unavailable", http.StatusInternalServerError)
+		return
+	}
+	payload, err := json.Marshal(passkeyRegistrationState{Session: *session, Username: user.Username, Name: input.Name, Handle: user.PasskeyHandle, PasswordHash: passwordHash})
+	if err != nil {
+		http.Error(w, "passkey setup unavailable", http.StatusInternalServerError)
+		return
+	}
+	challenge, err := s.store.CreateAuthChallenge(r.Context(), "bootstrap", nil, payload, 5*time.Minute)
+	if err != nil {
+		http.Error(w, "passkey setup unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"options": creation, "challengeToken": challenge})
+}
+
+func (s *Server) setupPasskeyFinish(w http.ResponseWriter, r *http.Request) {
+	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "bootstrap")
+	if err != nil {
+		http.Error(w, archive.ErrInvalidBootstrap.Error(), http.StatusGone)
+		return
+	}
+	var state passkeyRegistrationState
+	if err = json.Unmarshal(challenge.Payload, &state); err != nil {
+		http.Error(w, "passkey setup failed", http.StatusBadRequest)
+		return
+	}
+	user := archive.User{Username: state.Username, PasskeyHandle: state.Handle}
+	credential, err := s.passkeys.FinishRegistration(user, state.Session, r)
+	if err != nil {
+		http.Error(w, "passkey setup failed", http.StatusBadRequest)
+		return
+	}
+	created, recovery, err := s.store.BootstrapSuperAdminWithPasskeyHash(r.Context(), r.Header.Get("X-Kura-Bootstrap"), state.Username, state.Name, state.Handle, *credential, state.PasswordHash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err = s.replaceSession(w, r, created.ID); err != nil {
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"redirect": "/account", "recoveryCode": recovery})
 }
 
 func pageNumber(r *http.Request) int {
@@ -609,6 +850,401 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
 
+type passkeyRegistrationState struct {
+	Session      webauthn.SessionData `json:"session"`
+	Username     string               `json:"username"`
+	Name         string               `json:"name"`
+	Handle       []byte               `json:"handle"`
+	UserID       int64                `json:"userId,omitempty"`
+	PasswordHash string               `json:"passwordHash,omitempty"`
+	RecoveryHash string               `json:"recoveryHash,omitempty"`
+}
+
+func (s *Server) passkeyRegistrationBegin(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Username string `json:"username"`
+		Name     string `json:"name"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" || len(input.Name) > 64 {
+		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		return
+	}
+	user, err := archive.NewPasskeyRegistrationUser(input.Username)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	creation, session, err := s.passkeys.BeginRegistration(user)
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	state, err := json.Marshal(passkeyRegistrationState{Session: *session, Username: user.Username, Name: input.Name, Handle: user.PasskeyHandle})
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	token, err := s.store.CreateAuthChallenge(r.Context(), "register", nil, state, 5*time.Minute)
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"options": creation, "challengeToken": token})
+}
+
+func (s *Server) passkeyRegistrationFinish(w http.ResponseWriter, r *http.Request) {
+	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "register")
+	if err != nil {
+		http.Error(w, archive.ErrInvalidChallenge.Error(), http.StatusBadRequest)
+		return
+	}
+	var state passkeyRegistrationState
+	if err = json.Unmarshal(challenge.Payload, &state); err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	user := archive.User{Username: state.Username, PasskeyHandle: state.Handle}
+	credential, err := s.passkeys.FinishRegistration(user, state.Session, r)
+	if err != nil {
+		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		return
+	}
+	created, recovery, err := s.store.CreatePasskeyOnlyAccountWithHandle(r.Context(), state.Username, state.Name, state.Handle, *credential)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, archive.ErrUsernameTaken) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if err = s.replaceSession(w, r, created.ID); err != nil {
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"redirect": "/account", "recoveryCode": recovery})
+}
+
+func (s *Server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
+	assertion, session, err := s.passkeys.BeginDiscoverableLogin()
+	if err != nil {
+		http.Error(w, "passkey sign-in unavailable", http.StatusInternalServerError)
+		return
+	}
+	payload, err := json.Marshal(session)
+	if err != nil {
+		http.Error(w, "passkey sign-in unavailable", http.StatusInternalServerError)
+		return
+	}
+	token, err := s.store.CreateAuthChallenge(r.Context(), "login", nil, payload, 5*time.Minute)
+	if err != nil {
+		http.Error(w, "passkey sign-in unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"options": assertion, "challengeToken": token})
+}
+
+func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
+	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "login")
+	if err != nil {
+		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		return
+	}
+	var session webauthn.SessionData
+	if err = json.Unmarshal(challenge.Payload, &session); err != nil {
+		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		return
+	}
+	validated, credential, err := s.passkeys.FinishPasskeyLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
+		user, loadErr := s.store.PasskeyUser(r.Context(), rawID, userHandle)
+		if loadErr != nil {
+			return nil, archive.ErrInvalidLogin
+		}
+		return user, nil
+	}, session, r)
+	if err != nil {
+		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		return
+	}
+	user, ok := validated.(archive.User)
+	if !ok || !user.Active() {
+		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		return
+	}
+	if err = s.store.UpdatePasskey(r.Context(), user.ID, *credential); err != nil {
+		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		return
+	}
+	if err = s.replaceSession(w, r, user.ID); err != nil {
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"redirect": safeNext(r.URL.Query().Get("next"))})
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (s *Server) passkeyFreshBegin(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
+	if err != nil || len(authUser.Credentials) == 0 {
+		http.Error(w, "passkey verification unavailable", http.StatusBadRequest)
+		return
+	}
+	assertion, session, err := s.passkeys.BeginLogin(authUser)
+	if err != nil {
+		http.Error(w, "passkey verification unavailable", http.StatusInternalServerError)
+		return
+	}
+	payload, err := json.Marshal(session)
+	if err != nil {
+		http.Error(w, "passkey verification unavailable", http.StatusInternalServerError)
+		return
+	}
+	token, err := s.store.CreateAuthChallenge(r.Context(), "fresh", &user.ID, payload, 5*time.Minute)
+	if err != nil {
+		http.Error(w, "passkey verification unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"options": assertion, "challengeToken": token})
+}
+
+func (s *Server) passkeyAddBegin(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	var input struct {
+		Name string `json:"name"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" || len(input.Name) > 64 {
+		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		return
+	}
+	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusBadRequest)
+		return
+	}
+	creation, session, err := s.passkeys.BeginRegistration(authUser)
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	payload, err := json.Marshal(passkeyRegistrationState{Session: *session, Name: input.Name, UserID: user.ID})
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	token, err := s.store.CreateAuthChallenge(r.Context(), "add", &user.ID, payload, 5*time.Minute)
+	if err != nil {
+		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"options": creation, "challengeToken": token})
+}
+
+func (s *Server) passkeyAddFinish(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "add")
+	if err != nil || challenge.UserID == nil || *challenge.UserID != user.ID {
+		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		return
+	}
+	var state passkeyRegistrationState
+	if err = json.Unmarshal(challenge.Payload, &state); err != nil || state.UserID != user.ID {
+		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		return
+	}
+	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		return
+	}
+	credential, err := s.passkeys.FinishRegistration(authUser, state.Session, r)
+	if err != nil {
+		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		return
+	}
+	if _, err = s.store.AddPasskey(r.Context(), user.ID, state.Name, *credential); err != nil {
+		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		return
+	}
+	status, err := s.store.SecurityStatus(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "account security unavailable", http.StatusInternalServerError)
+		return
+	}
+	recovery := ""
+	if !status.RecoveryCodeActive {
+		recovery, err = s.store.ReplaceRecoveryCode(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, "recovery code unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, map[string]any{"added": true, "recoveryCode": recovery, "redirect": "/account"})
+}
+
+func (s *Server) passkeyFreshFinish(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "fresh")
+	if err != nil || challenge.UserID == nil || *challenge.UserID != user.ID {
+		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		return
+	}
+	var session webauthn.SessionData
+	if err = json.Unmarshal(challenge.Payload, &session); err != nil {
+		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		return
+	}
+	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		return
+	}
+	credential, err := s.passkeys.FinishLogin(authUser, session, r)
+	if err != nil || s.store.UpdatePasskey(r.Context(), user.ID, *credential) != nil {
+		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		return
+	}
+	if err = s.store.MarkSessionPasskeyVerified(r.Context(), currentSession(r).Token, user.ID); err != nil {
+		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"verified": true})
+}
+
+func (s *Server) removePassword(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	if r.FormValue("confirmation") != "remove" {
+		http.Error(w, "confirmation required", http.StatusBadRequest)
+		return
+	}
+	fresh, err := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
+	if err != nil || !fresh {
+		http.Error(w, "fresh passkey verification required", http.StatusForbidden)
+		return
+	}
+	if err = s.store.RemovePassword(r.Context(), user.ID, currentSession(r).Token); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/account?notice=password-removed", http.StatusSeeOther)
+}
+
+func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err = s.store.RemovePasskey(r.Context(), user.ID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if isHTMX(r) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/account?notice=passkey-removed", http.StatusSeeOther)
+}
+
+func (s *Server) replaceRecoveryCode(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	fresh, err := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
+	if err != nil || !fresh {
+		http.Error(w, "fresh passkey verification required", http.StatusForbidden)
+		return
+	}
+	code, err := s.store.ReplaceRecoveryCode(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "recovery code unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "recovery", viewData{Title: "Recovery code replaced — Kura", ActiveNav: "account", User: user, RecoveryCode: code})
+}
+
+func (s *Server) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	if err := s.store.RevokeOtherSessions(r.Context(), user.ID, currentSession(r).Token); err != nil {
+		http.Error(w, "sessions could not be revoked", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/account?notice=sessions-revoked", http.StatusSeeOther)
+}
+
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	status, err := s.store.SecurityStatus(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "account security unavailable", http.StatusInternalServerError)
+		return
+	}
+	if status.PasswordEnabled {
+		if _, err = s.store.Authenticate(r.Context(), user.Username, r.FormValue("current_password")); err != nil {
+			http.Error(w, archive.ErrInvalidLogin.Error(), http.StatusForbidden)
+			return
+		}
+	} else {
+		fresh, freshErr := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
+		if freshErr != nil || !fresh {
+			http.Error(w, "fresh passkey verification required", http.StatusForbidden)
+			return
+		}
+	}
+	if err = s.store.SetPassword(r.Context(), user.ID, r.FormValue("password")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err = s.store.RevokeOtherSessions(r.Context(), user.ID, currentSession(r).Token); err != nil {
+		http.Error(w, "sessions could not be revoked", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/account?notice=password-updated", http.StatusSeeOther)
+}
+
 func (s *Server) loginForm(w http.ResponseWriter, r *http.Request) {
 	if currentUser(r) != nil {
 		http.Redirect(w, r, "/account", http.StatusSeeOther)
@@ -625,16 +1261,150 @@ func safeNext(raw string) string {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	key := authenticationRateKey(r, r.FormValue("username"))
+	if !s.loginLimiter.Allow(key) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		s.render(w, r, "auth", viewData{Title: "Sign in — Kura", ActiveNav: "account", Error: archive.ErrInvalidLogin.Error(), Next: safeNext(r.FormValue("next"))})
+		return
+	}
 	user, err := s.store.Authenticate(r.Context(), r.FormValue("username"), r.FormValue("password"))
 	if err != nil {
-		s.render(w, r, "auth", viewData{Title: "Sign in — Kura", ActiveNav: "account", Error: err.Error(), Next: safeNext(r.FormValue("next"))})
+		s.render(w, r, "auth", viewData{Title: "Sign in — Kura", ActiveNav: "account", Error: archive.ErrInvalidLogin.Error(), Next: safeNext(r.FormValue("next"))})
+		return
+	}
+	s.loginLimiter.Reset(key)
+	if err = s.replaceSession(w, r, user.ID); err != nil {
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
+}
+
+func authenticationRateKey(r *http.Request, username string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return host + "|" + strings.ToLower(username)
+}
+
+func (s *Server) recoveryForm(w http.ResponseWriter, r *http.Request) {
+	if currentUser(r) != nil {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	s.render(w, r, "recovery", viewData{Title: "Recover account — Kura", ActiveNav: "account"})
+}
+
+func (s *Server) recoverAccount(w http.ResponseWriter, r *http.Request) {
+	key := authenticationRateKey(r, r.FormValue("username"))
+	if !s.recoveryLimiter.Allow(key) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		s.render(w, r, "recovery", viewData{Title: "Recover account — Kura", ActiveNav: "account", Error: archive.ErrInvalidRecovery.Error()})
+		return
+	}
+	user, replacement, err := s.store.RecoverPassword(r.Context(), r.FormValue("username"), r.FormValue("recovery_code"), r.FormValue("password"))
+	if err != nil {
+		errorMessage := archive.ErrInvalidRecovery.Error()
+		if !errors.Is(err, archive.ErrInvalidRecovery) {
+			errorMessage = err.Error()
+		}
+		s.render(w, r, "recovery", viewData{Title: "Recover account — Kura", ActiveNav: "account", Error: errorMessage})
+		return
+	}
+	s.recoveryLimiter.Reset(key)
+	if err = s.replaceSession(w, r, user.ID); err != nil {
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "recovery", viewData{Title: "Recovery complete — Kura", ActiveNav: "account", User: &user, RecoveryCode: replacement})
+}
+
+func (s *Server) recoverPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Username     string `json:"username"`
+		RecoveryCode string `json:"recoveryCode"`
+		Name         string `json:"name"`
+		Password     string `json:"password"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, archive.ErrInvalidRecovery.Error(), http.StatusBadRequest)
+		return
+	}
+	key := authenticationRateKey(r, input.Username)
+	if !s.recoveryLimiter.Allow(key) {
+		http.Error(w, archive.ErrInvalidRecovery.Error(), http.StatusTooManyRequests)
+		return
+	}
+	user, recoveryHash, err := s.store.VerifyRecoveryCode(r.Context(), input.Username, input.RecoveryCode)
+	if err != nil {
+		http.Error(w, archive.ErrInvalidRecovery.Error(), http.StatusBadRequest)
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" || len(input.Name) > 64 {
+		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		return
+	}
+	passwordHash := ""
+	if input.Password != "" {
+		passwordHash, err = archive.PreparePassword(input.Password)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	creation, session, err := s.passkeys.BeginRegistration(user)
+	if err != nil {
+		http.Error(w, "passkey recovery unavailable", http.StatusInternalServerError)
+		return
+	}
+	payload, err := json.Marshal(passkeyRegistrationState{Session: *session, Name: input.Name, UserID: user.ID, PasswordHash: passwordHash, RecoveryHash: recoveryHash})
+	if err != nil {
+		http.Error(w, "passkey recovery unavailable", http.StatusInternalServerError)
+		return
+	}
+	challenge, err := s.store.CreateAuthChallenge(r.Context(), "recover-passkey", &user.ID, payload, 5*time.Minute)
+	if err != nil {
+		http.Error(w, "passkey recovery unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.recoveryLimiter.Reset(key)
+	writeJSON(w, map[string]any{"options": creation, "challengeToken": challenge})
+}
+
+func (s *Server) recoverPasskeyFinish(w http.ResponseWriter, r *http.Request) {
+	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "recover-passkey")
+	if err != nil || challenge.UserID == nil {
+		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		return
+	}
+	var state passkeyRegistrationState
+	if err = json.Unmarshal(challenge.Payload, &state); err != nil || state.UserID != *challenge.UserID {
+		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		return
+	}
+	user, err := s.store.WebAuthnUser(r.Context(), state.UserID)
+	if err != nil {
+		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		return
+	}
+	credential, err := s.passkeys.FinishRegistration(user, state.Session, r)
+	if err != nil {
+		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		return
+	}
+	replacement, err := s.store.CompletePasskeyRecovery(r.Context(), user.ID, state.RecoveryHash, state.Name, *credential, state.PasswordHash)
+	if err != nil {
+		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
 		return
 	}
 	if err = s.replaceSession(w, r, user.ID); err != nil {
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
+	writeJSON(w, map[string]any{"redirect": "/account", "recoveryCode": replacement})
 }
 
 func (s *Server) replaceSession(w http.ResponseWriter, r *http.Request, userID int64) error {
@@ -674,7 +1444,12 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 			owned = append(owned, pool)
 		}
 	}
-	s.render(w, r, "account", viewData{Title: user.Username + " — Kura", ActiveNav: "account", Posts: posts, Pools: owned})
+	security, err := s.store.SecurityStatus(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "account unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "account", viewData{Title: user.Username + " — Kura", ActiveNav: "account", Posts: posts, Pools: owned, Security: security, Notice: r.URL.Query().Get("notice")})
 }
 
 func (s *Server) newUpload(w http.ResponseWriter, r *http.Request) {

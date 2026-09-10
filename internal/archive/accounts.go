@@ -11,11 +11,16 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"golang.org/x/crypto/argon2"
 )
 
 const sessionLifetime = 30 * 24 * time.Hour
+
+const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 var (
 	ErrUsernameTaken       = errors.New("username is already registered")
@@ -27,13 +32,20 @@ var (
 )
 
 type User struct {
-	ID           int64
-	Username     string
-	Role         string
-	IsSuperAdmin bool
-	SuspendedAt  string
-	CreatedAt    string
+	ID            int64
+	Username      string
+	Role          string
+	IsSuperAdmin  bool
+	SuspendedAt   string
+	CreatedAt     string
+	PasskeyHandle []byte
+	Credentials   []webauthn.Credential
 }
+
+func (u User) WebAuthnID() []byte                         { return u.PasskeyHandle }
+func (u User) WebAuthnName() string                       { return u.Username }
+func (u User) WebAuthnDisplayName() string                { return u.Username }
+func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
 
 func (u *User) Active() bool { return u != nil && u.SuspendedAt == "" }
 func (u *User) CanUpload() bool {
@@ -51,11 +63,19 @@ type Session struct {
 }
 
 func randomToken(bytes int) (string, error) {
-	b := make([]byte, bytes)
-	if _, err := rand.Read(b); err != nil {
+	b, err := randomBytes(bytes)
+	if err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func randomBytes(size int) ([]byte, error) {
+	b := make([]byte, size)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func hashToken(token string) string {
@@ -64,8 +84,14 @@ func hashToken(token string) string {
 }
 
 func hashPassword(password string) (string, error) {
-	if len(password) < 10 || len(password) > 1024 {
-		return "", errors.New("password must be between 10 and 1024 characters")
+	length := utf8.RuneCountInString(password)
+	if !utf8.ValidString(password) || length < 15 || length > 128 {
+		return "", errors.New("password must be between 15 and 128 characters")
+	}
+	for _, r := range password {
+		if !unicode.IsPrint(r) {
+			return "", errors.New("password may contain only printable characters")
+		}
 	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -94,13 +120,15 @@ func verifyPassword(encoded, password string) bool {
 }
 
 func normalizeUsername(username string) (string, error) {
-	username = strings.TrimSpace(username)
 	if len(username) < 3 || len(username) > 32 {
 		return "", errors.New("username must be 3 to 32 characters")
 	}
-	for _, r := range username {
+	for i, r := range username {
 		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
 			return "", errors.New("username may contain only letters, numbers, underscores, and hyphens")
+		}
+		if (i == 0 || i == len(username)-1) && !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return "", errors.New("username must begin and end with a letter or number")
 		}
 	}
 	return username, nil
@@ -115,7 +143,11 @@ func (s *Store) Register(ctx context.Context, username, password string) (User, 
 	if err != nil {
 		return User{}, err
 	}
-	result, err := s.DB.ExecContext(ctx, `INSERT INTO users(username,password_hash) VALUES(?,?)`, username, passwordHash)
+	handle, err := randomBytes(32)
+	if err != nil {
+		return User{}, err
+	}
+	result, err := s.DB.ExecContext(ctx, `INSERT INTO users(username,password_hash,webauthn_id) VALUES(?,?,?)`, username, passwordHash, handle)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return User{}, ErrUsernameTaken
@@ -128,16 +160,21 @@ func (s *Store) Register(ctx context.Context, username, password string) (User, 
 
 func (s *Store) Authenticate(ctx context.Context, username, password string) (User, error) {
 	var user User
-	var hash string
+	var hash sql.NullString
 	var super int
-	err := s.DB.QueryRowContext(ctx, `SELECT id,username,password_hash,role,is_super_admin,COALESCE(suspended_at,''),created_at FROM users WHERE username=? COLLATE NOCASE`, strings.TrimSpace(username)).Scan(
+	err := s.DB.QueryRowContext(ctx, `SELECT id,username,password_hash,role,is_super_admin,COALESCE(suspended_at,''),created_at FROM users WHERE username=? COLLATE NOCASE`, username).Scan(
 		&user.ID, &user.Username, &hash, &user.Role, &super, &user.SuspendedAt, &user.CreatedAt)
-	if err != nil || !verifyPassword(hash, password) {
+	encoded := dummyPasswordHash
+	if hash.Valid {
+		encoded = hash.String
+	}
+	passwordValid := verifyPassword(encoded, password)
+	if err != nil || !hash.Valid || !passwordValid {
 		return User{}, ErrInvalidLogin
 	}
 	user.IsSuperAdmin = super != 0
 	if !user.Active() {
-		return User{}, ErrSuspended
+		return User{}, ErrInvalidLogin
 	}
 	return user, nil
 }

@@ -1,7 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,9 +14,496 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"kura/internal/archive"
 )
+
+type fakePasskeys struct {
+	user       archive.User
+	credential webauthn.Credential
+}
+
+func (f *fakePasskeys) BeginRegistration(archive.User) (*protocol.CredentialCreation, *webauthn.SessionData, error) {
+	return &protocol.CredentialCreation{}, &webauthn.SessionData{Challenge: "register", Expires: time.Now().Add(time.Minute)}, nil
+}
+func (f *fakePasskeys) FinishRegistration(archive.User, webauthn.SessionData, *http.Request) (*webauthn.Credential, error) {
+	return &f.credential, nil
+}
+func (f *fakePasskeys) BeginDiscoverableLogin() (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	return &protocol.CredentialAssertion{}, &webauthn.SessionData{Challenge: "login", Expires: time.Now().Add(time.Minute)}, nil
+}
+func (f *fakePasskeys) FinishPasskeyLogin(webauthn.DiscoverableUserHandler, webauthn.SessionData, *http.Request) (webauthn.User, *webauthn.Credential, error) {
+	return f.user, &f.credential, nil
+}
+func (f *fakePasskeys) BeginLogin(archive.User) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	return &protocol.CredentialAssertion{}, &webauthn.SessionData{Challenge: "fresh", Expires: time.Now().Add(time.Minute)}, nil
+}
+func (f *fakePasskeys) FinishLogin(archive.User, webauthn.SessionData, *http.Request) (*webauthn.Credential, error) {
+	return &f.credential, nil
+}
+
+func TestPasskeyRegistrationBeginUsesStrictConfiguredRPAndServerSideChallenge(t *testing.T) {
+	root := t.TempDir()
+	store, err := archive.Open(filepath.Join(root, "kura.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewWithAuth(store, filepath.Join(root, "media"), AuthConfig{
+		RPID: "localhost", Origins: []string{"http://localhost:8080"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/register", nil))
+	cookie := get.Result().Cookies()[0]
+	session, err := store.Session(context.Background(), cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.NewBufferString(`{"username":"PasskeyUser","name":"MacBook Touch ID"}`)
+	request := httptest.NewRequest("POST", "/auth/passkeys/register/begin", body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("begin status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		ChallengeToken string         `json:"challengeToken"`
+		Options        map[string]any `json:"options"`
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	publicKey, _ := payload.Options["publicKey"].(map[string]any)
+	rp, _ := publicKey["rp"].(map[string]any)
+	if payload.ChallengeToken == "" || rp["id"] != "localhost" {
+		t.Fatalf("unexpected begin payload: %+v", payload)
+	}
+	challenge, err := store.ConsumeAuthChallenge(context.Background(), payload.ChallengeToken, "register")
+	if err != nil || bytes.Contains(challenge.Payload, []byte(payload.ChallengeToken)) {
+		t.Fatalf("challenge was not stored opaquely: %+v err=%v", challenge, err)
+	}
+}
+
+func TestPasskeyConfigurationRejectsOriginOutsideRPID(t *testing.T) {
+	root := t.TempDir()
+	store, err := archive.Open(filepath.Join(root, "kura.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err = NewWithAuth(store, filepath.Join(root, "media"), AuthConfig{RPID: "kura.example", Origins: []string{"https://evil.example"}}); err == nil {
+		t.Fatal("WebAuthn accepted an origin outside the configured RP ID")
+	}
+}
+
+func TestJSONPasskeyEndpointsRequireCSRFHeader(t *testing.T) {
+	server, _ := testServer(t)
+	request := httptest.NewRequest("POST", "/auth/passkeys/login/begin", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("JSON request without CSRF status=%d, want 403", response.Code)
+	}
+}
+
+func TestPasskeyLoginCreatesOrdinaryKuraSession(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, _ := store.Register(ctx, "passkey-login", "password login backup")
+	credential := webauthn.Credential{ID: []byte("login-credential"), PublicKey: []byte("public-key")}
+	if _, err := store.AddPasskey(ctx, user.ID, "Test passkey", credential); err != nil {
+		t.Fatal(err)
+	}
+	authUser, _ := store.WebAuthnUser(ctx, user.ID)
+	server.passkeys = &fakePasskeys{user: authUser, credential: credential}
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/login", nil))
+	anonCookie := get.Result().Cookies()[0]
+	anonSession, _ := store.Session(ctx, anonCookie.Value)
+
+	begin := httptest.NewRequest("POST", "/auth/passkeys/login/begin", strings.NewReader(`{}`))
+	begin.Header.Set("Content-Type", "application/json")
+	begin.Header.Set("X-CSRF-Token", anonSession.CSRF)
+	begin.AddCookie(anonCookie)
+	beginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(beginResponse, begin)
+	var begun struct {
+		ChallengeToken string `json:"challengeToken"`
+	}
+	_ = json.Unmarshal(beginResponse.Body.Bytes(), &begun)
+	if beginResponse.Code != http.StatusOK || begun.ChallengeToken == "" {
+		t.Fatalf("login begin failed: status=%d body=%s", beginResponse.Code, beginResponse.Body.String())
+	}
+
+	finish := httptest.NewRequest("POST", "/auth/passkeys/login/finish", strings.NewReader(`{}`))
+	finish.Header.Set("Content-Type", "application/json")
+	finish.Header.Set("X-CSRF-Token", anonSession.CSRF)
+	finish.Header.Set("X-Kura-Challenge", begun.ChallengeToken)
+	finish.AddCookie(anonCookie)
+	finishResponse := httptest.NewRecorder()
+	handler.ServeHTTP(finishResponse, finish)
+	if finishResponse.Code != http.StatusOK {
+		t.Fatalf("login finish failed: status=%d body=%s", finishResponse.Code, finishResponse.Body.String())
+	}
+	cookies := finishResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("passkey login did not set a session cookie")
+	}
+	authenticated, err := store.Session(ctx, cookies[0].Value)
+	if err != nil || authenticated.User == nil || authenticated.User.ID != user.ID {
+		t.Fatalf("passkey login session missing: %+v err=%v", authenticated, err)
+	}
+}
+
+func TestPasswordRemovalRequiresFreshPasskeyAndRecovery(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, _ := store.Register(ctx, "remove-password", "password to remove")
+	credential := webauthn.Credential{ID: []byte("remove-credential"), PublicKey: []byte("public-key")}
+	key, _ := store.AddPasskey(ctx, user.ID, "MacBook", credential)
+	if key.ID == 0 {
+		t.Fatal("test passkey was not stored")
+	}
+	_, _ = store.ReplaceRecoveryCode(ctx, user.ID)
+	authUser, _ := store.WebAuthnUser(ctx, user.ID)
+	server.passkeys = &fakePasskeys{user: authUser, credential: credential}
+	session, _ := store.NewSession(ctx, &user.ID)
+
+	denied := sessionRequest(t, server.Handler(), "POST", "/account/password/remove", url.Values{"confirmation": {"remove"}}, session)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("password removed without fresh passkey: status=%d body=%s", denied.Code, denied.Body.String())
+	}
+
+	beginRequest := httptest.NewRequest("POST", "/auth/passkeys/fresh/begin", strings.NewReader(`{}`))
+	beginRequest.Header.Set("Content-Type", "application/json")
+	beginRequest.Header.Set("X-CSRF-Token", session.CSRF)
+	beginRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	beginResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(beginResponse, beginRequest)
+	var begun struct {
+		ChallengeToken string `json:"challengeToken"`
+	}
+	_ = json.Unmarshal(beginResponse.Body.Bytes(), &begun)
+	if beginResponse.Code != http.StatusOK || begun.ChallengeToken == "" {
+		t.Fatalf("fresh verification begin failed: status=%d body=%s", beginResponse.Code, beginResponse.Body.String())
+	}
+	finishRequest := httptest.NewRequest("POST", "/auth/passkeys/fresh/finish", strings.NewReader(`{}`))
+	finishRequest.Header.Set("Content-Type", "application/json")
+	finishRequest.Header.Set("X-CSRF-Token", session.CSRF)
+	finishRequest.Header.Set("X-Kura-Challenge", begun.ChallengeToken)
+	finishRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	finishResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(finishResponse, finishRequest)
+	if finishResponse.Code != http.StatusOK {
+		t.Fatalf("fresh verification failed: status=%d body=%s", finishResponse.Code, finishResponse.Body.String())
+	}
+
+	removed := sessionRequest(t, server.Handler(), "POST", "/account/password/remove", url.Values{"confirmation": {"remove"}}, session)
+	if removed.Code != http.StatusSeeOther {
+		t.Fatalf("fresh password removal failed: status=%d body=%s", removed.Code, removed.Body.String())
+	}
+	status, err := store.SecurityStatus(ctx, user.ID)
+	if err != nil || status.PasswordEnabled {
+		t.Fatalf("password remained enabled: %+v err=%v", status, err)
+	}
+}
+
+func TestAuthenticatedUserAddsFirstPasskeyAndReceivesRecoveryCode(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, _ := store.Register(ctx, "add-passkey", "password stays enabled")
+	credential := webauthn.Credential{ID: []byte("new-credential"), PublicKey: []byte("public-key")}
+	authUser, _ := store.WebAuthnUser(ctx, user.ID)
+	server.passkeys = &fakePasskeys{user: authUser, credential: credential}
+	session, _ := store.NewSession(ctx, &user.ID)
+	cookie := &http.Cookie{Name: sessionCookie, Value: session.Token}
+
+	begin := httptest.NewRequest("POST", "/account/passkeys/add/begin", strings.NewReader(`{"name":"Bitwarden"}`))
+	begin.Header.Set("Content-Type", "application/json")
+	begin.Header.Set("X-CSRF-Token", session.CSRF)
+	begin.AddCookie(cookie)
+	beginResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(beginResponse, begin)
+	var begun struct {
+		ChallengeToken string `json:"challengeToken"`
+	}
+	_ = json.Unmarshal(beginResponse.Body.Bytes(), &begun)
+	if beginResponse.Code != http.StatusOK || begun.ChallengeToken == "" {
+		t.Fatalf("add begin failed: status=%d body=%s", beginResponse.Code, beginResponse.Body.String())
+	}
+
+	finish := httptest.NewRequest("POST", "/account/passkeys/add/finish", strings.NewReader(`{}`))
+	finish.Header.Set("Content-Type", "application/json")
+	finish.Header.Set("X-CSRF-Token", session.CSRF)
+	finish.Header.Set("X-Kura-Challenge", begun.ChallengeToken)
+	finish.AddCookie(cookie)
+	finishResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(finishResponse, finish)
+	var result struct {
+		RecoveryCode string `json:"recoveryCode"`
+	}
+	_ = json.Unmarshal(finishResponse.Body.Bytes(), &result)
+	security, _ := store.SecurityStatus(ctx, user.ID)
+	if finishResponse.Code != http.StatusOK || result.RecoveryCode == "" || len(security.Passkeys) != 1 || security.Passkeys[0].Name != "Bitwarden" || !security.RecoveryCodeActive {
+		t.Fatalf("add finish failed: status=%d result=%+v security=%+v body=%s", finishResponse.Code, result, security, finishResponse.Body.String())
+	}
+}
+
+func TestRecoveryReplacesCodeRevokesSessionsAndSignsUserIn(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, _ := store.Register(ctx, "web-recovery", "original web password")
+	oldSession, _ := store.NewSession(ctx, &user.ID)
+	code, _ := store.ReplaceRecoveryCode(ctx, user.ID)
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/recover", nil))
+	anonCookie := get.Result().Cookies()[0]
+	anonSession, _ := store.Session(ctx, anonCookie.Value)
+	response := sessionRequest(t, handler, "POST", "/recover", url.Values{
+		"username": {"WEB-RECOVERY"}, "recovery_code": {code}, "password": {"replacement web password"},
+	}, anonSession)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Save your replacement recovery code") || !strings.Contains(response.Body.String(), "data-download-recovery") {
+		t.Fatalf("recovery response status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := store.Session(ctx, oldSession.Token); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("old session survived recovery: %v", err)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("recovery did not sign the user in")
+	}
+	recovered, err := store.Session(ctx, cookies[0].Value)
+	if err != nil || recovered.User == nil || recovered.User.ID != user.ID {
+		t.Fatalf("recovery session missing: %+v err=%v", recovered, err)
+	}
+}
+
+func TestPasswordLoginRateLimitUsesGenericFailure(t *testing.T) {
+	server, store := testServer(t)
+	_, _ = store.Register(context.Background(), "rate-user", "correct rate password")
+	server.loginLimiter = newAttemptLimiter(2, time.Minute)
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/login", nil))
+	cookie := get.Result().Cookies()[0]
+	session, _ := store.Session(context.Background(), cookie.Value)
+	for i := 0; i < 2; i++ {
+		response := sessionRequest(t, handler, "POST", "/login", url.Values{"username": {"rate-user"}, "password": {"wrong password here"}}, session)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), archive.ErrInvalidLogin.Error()) {
+			t.Fatalf("attempt %d leaked a distinct failure: status=%d body=%s", i, response.Code, response.Body.String())
+		}
+	}
+	blocked := sessionRequest(t, handler, "POST", "/login", url.Values{"username": {"rate-user"}, "password": {"correct rate password"}}, session)
+	if blocked.Code != http.StatusTooManyRequests || !strings.Contains(blocked.Body.String(), archive.ErrInvalidLogin.Error()) {
+		t.Fatalf("rate limit response was not generic: status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+}
+
+func TestAuthenticationAndAccountSecurityUIExposePasskeyFirstFlows(t *testing.T) {
+	server, store := testServer(t)
+	handler := server.Handler()
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, httptest.NewRequest("GET", "/login", nil))
+	loginHTML := login.Body.String()
+	passkeyAt := strings.Index(loginHTML, `data-passkey-action="login"`)
+	passwordAt := strings.Index(loginHTML, `autocomplete="current-password"`)
+	if passkeyAt < 0 || passwordAt < 0 || passkeyAt > passwordAt || !strings.Contains(loginHTML, `href="/recover"`) {
+		t.Fatalf("sign-in is not passkey-first with recovery: %s", loginHTML)
+	}
+	register := httptest.NewRecorder()
+	handler.ServeHTTP(register, httptest.NewRequest("GET", "/register", nil))
+	if body := register.Body.String(); !strings.Contains(body, `data-passkey-action="register"`) || !strings.Contains(body, `minlength="15"`) || !strings.Contains(body, `maxlength="128"`) {
+		t.Fatalf("registration does not offer both approved methods: %s", body)
+	}
+
+	user, _ := store.Register(context.Background(), "security-ui", "security ui password")
+	_, _ = store.AddPasskey(context.Background(), user.ID, "Bitwarden", webauthn.Credential{ID: []byte("ui-key"), PublicKey: []byte("public-key")})
+	_, _ = store.ReplaceRecoveryCode(context.Background(), user.ID)
+	session, _ := store.NewSession(context.Background(), &user.ID)
+	account := sessionRequest(t, handler, "GET", "/account", nil, session)
+	body := account.Body.String()
+	for _, want := range []string{"Account security", "Password enabled", "Bitwarden", "Recovery code active", `data-passkey-action="add"`, `data-passkey-action="fresh"`, "data-download-recovery"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("account security UI missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "hx-push-url") {
+		t.Fatal("account inline security actions change browser history")
+	}
+	script := httptest.NewRecorder()
+	handler.ServeHTTP(script, httptest.NewRequest("GET", "/static/passkeys.js", nil))
+	if script.Code != http.StatusOK || !strings.Contains(script.Body.String(), "data-copy-recovery") || !strings.Contains(script.Body.String(), "navigator.clipboard") {
+		t.Fatalf("recovery code copy control is unavailable: status=%d", script.Code)
+	}
+}
+
+func TestPasskeyRemovalHasHTMXFragmentAndRedirectFallback(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, _ := store.Register(ctx, "remove-keys", "password remains here")
+	first, _ := store.AddPasskey(ctx, user.ID, "First", webauthn.Credential{ID: []byte("first-key"), PublicKey: []byte("public-one")})
+	second, _ := store.AddPasskey(ctx, user.ID, "Second", webauthn.Credential{ID: []byte("second-key"), PublicKey: []byte("public-two")})
+	session, _ := store.NewSession(ctx, &user.ID)
+
+	values := url.Values{"csrf": {session.CSRF}}
+	htmxRequest := httptest.NewRequest("POST", "/account/passkeys/"+strconv.FormatInt(first.ID, 10)+"/remove", strings.NewReader(values.Encode()))
+	htmxRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	htmxRequest.Header.Set("HX-Request", "true")
+	htmxRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	htmxResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(htmxResponse, htmxRequest)
+	if htmxResponse.Code != http.StatusOK || htmxResponse.Header().Get("Location") != "" || htmxResponse.Body.Len() != 0 {
+		t.Fatalf("HTMX removal navigated or returned stale content: status=%d location=%q body=%s", htmxResponse.Code, htmxResponse.Header().Get("Location"), htmxResponse.Body.String())
+	}
+	fallback := sessionRequest(t, server.Handler(), "POST", "/account/passkeys/"+strconv.FormatInt(second.ID, 10)+"/remove", nil, session)
+	if fallback.Code != http.StatusSeeOther || fallback.Header().Get("Location") != "/account?notice=passkey-removed" {
+		t.Fatalf("fallback removal status=%d location=%q", fallback.Code, fallback.Header().Get("Location"))
+	}
+}
+
+func TestBootstrapSetupURLCreatesFirstSuperAdminOnce(t *testing.T) {
+	server, store := testServer(t)
+	token, err := store.CreateBootstrapToken(context.Background(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/setup?token="+url.QueryEscape(token), nil))
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "Passwordless passkey") || !strings.Contains(get.Body.String(), "Passkey plus password") {
+		t.Fatalf("setup choices missing: status=%d body=%s", get.Code, get.Body.String())
+	}
+	cookie := get.Result().Cookies()[0]
+	session, _ := store.Session(context.Background(), cookie.Value)
+	created := sessionRequest(t, handler, "POST", "/setup/password", url.Values{
+		"token": {token}, "username": {"FirstRoot"}, "password": {"initial root password"},
+	}, session)
+	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != "/account" {
+		t.Fatalf("password bootstrap failed: status=%d body=%s", created.Code, created.Body.String())
+	}
+	cookies := created.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("bootstrap did not create session")
+	}
+	authenticated, err := store.Session(context.Background(), cookies[0].Value)
+	if err != nil || authenticated.User == nil || !authenticated.User.IsSuperAdmin {
+		t.Fatalf("bootstrap session is not super admin: %+v err=%v", authenticated, err)
+	}
+	replay := httptest.NewRecorder()
+	handler.ServeHTTP(replay, httptest.NewRequest("GET", "/setup?token="+url.QueryEscape(token), nil))
+	if replay.Code != http.StatusGone {
+		t.Fatalf("used setup URL status=%d, want 410", replay.Code)
+	}
+}
+
+func TestBootstrapPasskeyOnlyCreatesSuperAdminSession(t *testing.T) {
+	server, store := testServer(t)
+	token, _ := store.CreateBootstrapToken(context.Background(), time.Minute)
+	credential := webauthn.Credential{ID: []byte("bootstrap-key"), PublicKey: []byte("bootstrap-public")}
+	server.passkeys = &fakePasskeys{credential: credential}
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/setup?token="+url.QueryEscape(token), nil))
+	cookie := get.Result().Cookies()[0]
+	session, _ := store.Session(context.Background(), cookie.Value)
+
+	begin := httptest.NewRequest("POST", "/setup/passkey/begin", strings.NewReader(`{"username":"KeyRoot","name":"Root key"}`))
+	begin.Header.Set("Content-Type", "application/json")
+	begin.Header.Set("X-CSRF-Token", session.CSRF)
+	begin.Header.Set("X-Kura-Bootstrap", token)
+	begin.AddCookie(cookie)
+	beginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(beginResponse, begin)
+	var begun struct {
+		ChallengeToken string `json:"challengeToken"`
+	}
+	_ = json.Unmarshal(beginResponse.Body.Bytes(), &begun)
+	if beginResponse.Code != http.StatusOK || begun.ChallengeToken == "" {
+		t.Fatalf("bootstrap begin failed: status=%d body=%s", beginResponse.Code, beginResponse.Body.String())
+	}
+	finish := httptest.NewRequest("POST", "/setup/passkey/finish", strings.NewReader(`{}`))
+	finish.Header.Set("Content-Type", "application/json")
+	finish.Header.Set("X-CSRF-Token", session.CSRF)
+	finish.Header.Set("X-Kura-Bootstrap", token)
+	finish.Header.Set("X-Kura-Challenge", begun.ChallengeToken)
+	finish.AddCookie(cookie)
+	finishResponse := httptest.NewRecorder()
+	handler.ServeHTTP(finishResponse, finish)
+	if finishResponse.Code != http.StatusOK || !strings.Contains(finishResponse.Body.String(), "recoveryCode") {
+		t.Fatalf("bootstrap finish failed: status=%d body=%s", finishResponse.Code, finishResponse.Body.String())
+	}
+	cookies := finishResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("bootstrap passkey did not set a session")
+	}
+	authenticated, err := store.Session(context.Background(), cookies[0].Value)
+	if err != nil || authenticated.User == nil || !authenticated.User.IsSuperAdmin {
+		t.Fatalf("passkey bootstrap session is not super admin: %+v err=%v", authenticated, err)
+	}
+}
+
+func TestRecoveryCanEstablishPasskeyAndNewSession(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	user, _ := store.Register(ctx, "recover-passkey", "original recovery password")
+	oldSession, _ := store.NewSession(ctx, &user.ID)
+	code, _ := store.ReplaceRecoveryCode(ctx, user.ID)
+	credential := webauthn.Credential{ID: []byte("recovery-passkey"), PublicKey: []byte("recovery-public")}
+	server.passkeys = &fakePasskeys{credential: credential}
+	handler := server.Handler()
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest("GET", "/recover", nil))
+	cookie := get.Result().Cookies()[0]
+	session, _ := store.Session(ctx, cookie.Value)
+	beginBody, _ := json.Marshal(map[string]string{"username": "recover-passkey", "recoveryCode": code, "name": "Recovered key"})
+	begin := httptest.NewRequest("POST", "/recover/passkey/begin", bytes.NewReader(beginBody))
+	begin.Header.Set("Content-Type", "application/json")
+	begin.Header.Set("X-CSRF-Token", session.CSRF)
+	begin.AddCookie(cookie)
+	beginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(beginResponse, begin)
+	var begun struct {
+		ChallengeToken string `json:"challengeToken"`
+	}
+	_ = json.Unmarshal(beginResponse.Body.Bytes(), &begun)
+	if beginResponse.Code != http.StatusOK || begun.ChallengeToken == "" {
+		t.Fatalf("recovery passkey begin failed: status=%d body=%s", beginResponse.Code, beginResponse.Body.String())
+	}
+	finish := httptest.NewRequest("POST", "/recover/passkey/finish", strings.NewReader(`{}`))
+	finish.Header.Set("Content-Type", "application/json")
+	finish.Header.Set("X-CSRF-Token", session.CSRF)
+	finish.Header.Set("X-Kura-Challenge", begun.ChallengeToken)
+	finish.AddCookie(cookie)
+	finishResponse := httptest.NewRecorder()
+	handler.ServeHTTP(finishResponse, finish)
+	if finishResponse.Code != http.StatusOK || !strings.Contains(finishResponse.Body.String(), "recoveryCode") {
+		t.Fatalf("recovery passkey finish failed: status=%d body=%s", finishResponse.Code, finishResponse.Body.String())
+	}
+	if _, err := store.Session(ctx, oldSession.Token); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("old session survived passkey recovery: %v", err)
+	}
+	cookies := finishResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("passkey recovery did not sign the user in")
+	}
+	authenticated, err := store.Session(ctx, cookies[0].Value)
+	if err != nil || authenticated.User == nil || authenticated.User.ID != user.ID {
+		t.Fatalf("passkey recovery session missing: %+v err=%v", authenticated, err)
+	}
+}
 
 func TestTemplatesUseVendoredHTMX(t *testing.T) {
 	body, err := assets.ReadFile("templates/base.html")

@@ -99,8 +99,17 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		rebuildsUsers := e.Name() == "003_auth_security.sql"
+		if rebuildsUsers {
+			if _, err = s.DB.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+				return err
+			}
+		}
 		tx, err := s.DB.BeginTx(ctx, nil)
 		if err != nil {
+			if rebuildsUsers {
+				_, _ = s.DB.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+			}
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, string(body)); err == nil {
@@ -108,10 +117,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 		if err != nil {
 			tx.Rollback()
+			if rebuildsUsers {
+				_, _ = s.DB.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+			}
 			return fmt.Errorf("migration %s: %w", e.Name(), err)
 		}
 		if err = tx.Commit(); err != nil {
+			if rebuildsUsers {
+				_, _ = s.DB.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+			}
 			return err
+		}
+		if rebuildsUsers {
+			if _, err = s.DB.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+				return err
+			}
+			var table string
+			if err = s.DB.QueryRowContext(ctx, `SELECT "table" FROM pragma_foreign_key_check LIMIT 1`).Scan(&table); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("migration %s foreign-key check: %w", e.Name(), err)
+			}
+			if table != "" {
+				return fmt.Errorf("migration %s left a foreign-key violation in %s", e.Name(), table)
+			}
 		}
 	}
 	return nil

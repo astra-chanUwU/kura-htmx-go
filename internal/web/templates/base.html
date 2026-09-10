@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
+{{if .CSRF}}<meta name="kura-csrf" content="{{.CSRF}}">{{end}}
 <script src="/static/theme.js"></script>
 <link rel="preload" href="/static/fonts/AtkinsonHyperlegible-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/kura.css">
 <script src="/static/htmx.min.js" defer></script>
+<script src="/static/passkeys.js" defer></script>
 </head>
 <body><a class="skip-link" href="#main">Skip to content</a>{{end}}
 {{define "nav"}}

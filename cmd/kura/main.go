@@ -12,6 +12,7 @@ import (
 	_ "image/png"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,7 +29,7 @@ func main() {
 	dbPath := flag.String("db", "var/kura.db", "SQLite database path")
 	media := flag.String("media", "var/media", "media root")
 	seed := flag.Bool("seed", false, "add demo posts if empty")
-	bootstrapUser := flag.String("bootstrap-super-admin", "", "create the initial super admin using KURA_BOOTSTRAP_PASSWORD")
+	bootstrap := flag.Bool("bootstrap-super-admin", false, "print a short-lived setup URL for the initial super admin")
 	flag.Parse()
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0755); err != nil {
 		log.Fatal(err)
@@ -41,16 +42,12 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
-	if *bootstrapUser != "" {
-		password := os.Getenv("KURA_BOOTSTRAP_PASSWORD")
-		if password == "" {
-			log.Fatal("KURA_BOOTSTRAP_PASSWORD is required with -bootstrap-super-admin")
-		}
-		user, err := store.BootstrapSuperAdmin(context.Background(), *bootstrapUser, password)
+	if *bootstrap {
+		token, err := store.CreateBootstrapToken(context.Background(), 15*time.Minute)
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("created initial super admin %q", user.Username)
+		log.Printf("Open this one-use Kura setup URL within 15 minutes: %s", setupURL(*addr, os.Getenv("KURA_ORIGINS"), token))
 	}
 	if *seed {
 		if err := seedDemo(context.Background(), store, *media); err != nil {
@@ -67,6 +64,21 @@ func main() {
 	}
 	log.Printf("Kura listening on http://%s", displayAddr)
 	log.Fatal(http.ListenAndServe(*addr, server.Handler()))
+}
+
+func setupURL(addr, configuredOrigins, token string) string {
+	origin := ""
+	if configuredOrigins != "" {
+		origin = strings.TrimSpace(strings.Split(configuredOrigins, ",")[0])
+	}
+	if origin == "" {
+		displayAddr := addr
+		if strings.HasPrefix(displayAddr, ":") {
+			displayAddr = "localhost" + displayAddr
+		}
+		origin = "http://" + displayAddr
+	}
+	return strings.TrimRight(origin, "/") + "/setup?token=" + url.QueryEscape(token)
 }
 
 func seedDemo(ctx context.Context, s *archive.Store, root string) error {

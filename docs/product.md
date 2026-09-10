@@ -8,7 +8,7 @@
 - Open post detail pages with image metadata, source, tags, pool membership, and previous/next keyboard navigation.
 - Jump to a random published post.
 - Browse pools/collections and their ordered posts.
-- Register and sign in with local accounts; keep favorites private to each viewer.
+- Register and sign in with password, passkey-only, or both; recover locally without email; keep favorites private to each viewer.
 - Create owned pools as owner-only drafts or publicly visible collections; add from post pages or use a searchable thumbnail picker to select and reorder images.
 - Upload from file, drag/drop, or clipboard as a moderator or admin.
 - Preview before publish; save drafts and publish deliberately.
@@ -39,8 +39,10 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `GET /random` | Redirect to a random published post |
 | `GET /pools` | Pool index |
 | `GET /pools/{slug}` | Ordered posts in a pool |
-| `GET/POST /register`, `GET/POST /login` | Local account access |
-| `GET /account` | Private favorites and owned pools |
+| `GET/POST /register`, `GET/POST /login`, `GET/POST /recover` | Password account access and recovery |
+| `POST /auth/passkeys/...` | Passkey registration, discoverable login, and fresh verification ceremonies |
+| `GET /account` and `POST /account/...` | Favorites, pools, passkeys, password/recovery state, and sessions |
+| `GET /setup`, `POST /setup/...` | Expiring one-use first-super-admin enrollment |
 | `GET /pools/new`, `POST /pools` | Create a draft or published pool |
 | `GET/POST /pools/{slug}/edit` | Owner-only pool editing |
 | `GET /pools/picker` | HTMX thumbnail search for the visual pool editor |
