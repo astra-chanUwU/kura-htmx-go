@@ -769,6 +769,58 @@ func TestModeratorCannotDeleteAnotherUsersUploadButAdminCan(t *testing.T) {
 	}
 }
 
+func TestPostQuickEditIsLimitedToEditorsAndSavesInline(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "quick-edit-root", "quick edit root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := store.Register(ctx, "quick-edit-viewer", "quick edit viewer password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,published_at) VALUES('published','originals/quick.png','thumbs/quick.jpg','image/png',1,1,1,'quick-edit-post',CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postID, _ := result.LastInsertId()
+	path := "/posts/" + strconv.FormatInt(postID, 10)
+	handler := server.Handler()
+
+	viewerSession, _ := store.NewSession(ctx, &viewer.ID)
+	viewerPage := sessionRequest(t, handler, "GET", path, nil, viewerSession)
+	if viewerPage.Code != http.StatusOK || strings.Contains(viewerPage.Body.String(), `id="quick-edit"`) {
+		t.Fatalf("viewer should not see quick edit: status=%d body=%s", viewerPage.Code, viewerPage.Body.String())
+	}
+
+	rootSession, _ := store.NewSession(ctx, &root.ID)
+	editorPage := sessionRequest(t, handler, "GET", path, nil, rootSession)
+	if editorPage.Code != http.StatusOK || !strings.Contains(editorPage.Body.String(), `<details id="quick-edit"`) || !strings.Contains(editorPage.Body.String(), `hx-post="`+path+`/edit"`) {
+		t.Fatalf("editor page lacks quick edit under the image: status=%d body=%s", editorPage.Code, editorPage.Body.String())
+	}
+
+	values := url.Values{"tags": {"updated_quick_tag"}, "source": {"https://example.test/source"}, "status": {"published"}, "csrf": {rootSession.CSRF}}
+	request := httptest.NewRequest("POST", path+"/edit", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: rootSession.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "Saved") || !strings.Contains(response.Body.String(), "updated_quick_tag") {
+		t.Fatalf("quick edit response status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	updated, err := store.Post(ctx, postID)
+	if err != nil || len(updated.Tags) != 1 || updated.Tags[0].Name != "updated_quick_tag" || updated.Source != "https://example.test/source" {
+		t.Fatalf("quick edit did not update post: %+v err=%v", updated, err)
+	}
+
+	denied := sessionRequest(t, handler, "POST", path+"/edit", url.Values{"tags": {"denied"}, "status": {"published"}}, viewerSession)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("viewer quick edit status=%d, want 403", denied.Code)
+	}
+}
+
 func TestViewerAddsPostToOwnedPoolFromPostPage(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()

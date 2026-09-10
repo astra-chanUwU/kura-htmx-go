@@ -647,6 +647,15 @@ func (s *Server) updatePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if isHTMX(r) {
+		post, err := s.visiblePost(r)
+		if err != nil {
+			http.Error(w, "post could not be refreshed", http.StatusInternalServerError)
+			return
+		}
+		s.render(w, r, "quick-edit", viewData{Post: post, PostTags: tagsString(post.Tags), Notice: "Saved."})
+		return
+	}
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", id), http.StatusSeeOther)
 }
 
