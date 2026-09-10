@@ -988,6 +988,36 @@ func TestNavigationMarksOnlyTheCurrentSection(t *testing.T) {
 			if got := strings.Count(html, `aria-current="page"`); got != 1 {
 				t.Errorf("current navigation item count = %d, want 1", got)
 			}
+			if tt.activeNav == "posts" {
+				if !strings.Contains(html, `<nav class="sub-nav" aria-label="Posts">`) || !strings.Contains(html, `<a class="sub-nav-link is-active" href="/posts">Browse</a>`) {
+					t.Errorf("posts sub-navigation is missing or not active: %s", html)
+				}
+				if got := strings.Count(html, `href="/random"`); got != 1 {
+					t.Errorf("random should appear once in the posts sub-navigation, got %d", got)
+				}
+			}
+			if tt.activeNav == "pools" && !strings.Contains(html, `<nav class="sub-nav" aria-label="Pools">`) {
+				t.Errorf("pools sub-navigation is missing: %s", html)
+			}
 		})
+	}
+
+	css := httptest.NewRecorder()
+	s.render(css, httptest.NewRequest("GET", "/", nil), "posts", viewData{Title: "Kura", ActiveNav: "posts"})
+	if !strings.Contains(css.Body.String(), `class="sub-nav"`) {
+		t.Fatal("posts page did not render contextual navigation")
+	}
+}
+
+func TestNavigationRibbonUsesThemeAwarePalette(t *testing.T) {
+	s, err := New(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	s.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/static/kura.css", nil))
+	css := recorder.Body.String()
+	if !strings.Contains(css, ":root{color-scheme:dark;") || !strings.Contains(css, "--nav-ribbon:var(--lavender);--nav-ink:var(--ink)") || !strings.Contains(css, ":root[data-theme=light]{color-scheme:light;") || !strings.Contains(css, "--nav-ribbon:var(--mint);--nav-ink:var(--button-ink)") || !strings.Contains(css, ".sub-nav{display:flex;flex-wrap:wrap;gap:0;padding:5px 20px;background:var(--nav-ribbon);color:var(--nav-ink)") || !strings.Contains(css, ".sub-nav-link:hover,.sub-nav-link.is-active{background:none;color:var(--accent)") {
+		t.Fatalf("navigation ribbon is not using theme-aware palette tokens: %s", css)
 	}
 }
