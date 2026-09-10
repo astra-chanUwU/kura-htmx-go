@@ -377,6 +377,18 @@ func TestAuthFormsUseArchiveSheetStructure(t *testing.T) {
 	}
 }
 
+func TestBrowseSearchControlIsCompact(t *testing.T) {
+	server, _ := testServer(t)
+	page := httptest.NewRecorder()
+	server.Handler().ServeHTTP(page, httptest.NewRequest("GET", "/posts", nil))
+	body := page.Body.String()
+	for _, want := range []string{`class="visually-hidden" for="q">Search tags</label>`, `placeholder="search tags…"`, `<button class="search-submit">Go</button>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("browse search control missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestPasskeyRemovalHasHTMXFragmentAndRedirectFallback(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()
