@@ -350,6 +350,33 @@ func TestAuthenticationAndAccountSecurityUIExposePasskeyFirstFlows(t *testing.T)
 	}
 }
 
+func TestAuthFormsUseArchiveSheetStructure(t *testing.T) {
+	server, _ := testServer(t)
+	for _, path := range []string{"/login", "/register"} {
+		page := httptest.NewRecorder()
+		server.Handler().ServeHTTP(page, httptest.NewRequest("GET", path, nil))
+		body := page.Body.String()
+		if page.Code != http.StatusOK || !strings.Contains(body, `<main id="main" class="form-page auth-page">`) || !strings.Contains(body, `auth-fields`) {
+			t.Fatalf("%s does not use the archive form structure: status=%d body=%s", path, page.Code, body)
+		}
+	}
+	css := httptest.NewRecorder()
+	server.Handler().ServeHTTP(css, httptest.NewRequest("GET", "/static/kura.css", nil))
+	if !strings.Contains(css.Body.String(), ".auth-fields label{display:grid;gap:5px;align-items:initial}") || !strings.Contains(css.Body.String(), ".auth-fields button{grid-column:auto;justify-self:start}") {
+		t.Fatalf("auth form still depends on nested grid placement: %s", css.Body.String())
+	}
+	styles := css.Body.String()
+	for _, want := range []string{
+		".auth-page .badge{border:0;padding:0;color:var(--mint)",
+		".auth-page .auth-method button{color:var(--mint);font-weight:700",
+		".auth-page .auth-divider{display:flex;align-items:center;gap:12px",
+	} {
+		if !strings.Contains(styles, want) {
+			t.Fatalf("auth refinement missing %q: %s", want, styles)
+		}
+	}
+}
+
 func TestPasskeyRemovalHasHTMXFragmentAndRedirectFallback(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()
@@ -602,6 +629,27 @@ func TestRegistrationRequiresCSRFAndCreatesViewerSession(t *testing.T) {
 	}
 	if regexp.MustCompile(`name="csrf" value="[^"]+"`).FindString(get.Body.String()) == "" {
 		t.Fatal("registration form did not render a CSRF token")
+	}
+}
+
+func TestUploadFormDefaultsToPublishedAndUsesWorkSurface(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	moderator, err := store.BootstrapSuperAdmin(ctx, "upload-admin", "upload admin password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.NewSession(ctx, &moderator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := sessionRequest(t, server.Handler(), "GET", "/uploads/new", nil, session)
+	body := page.Body.String()
+	if page.Code != http.StatusOK || !strings.Contains(body, `<main id="main" class="form-page wide-form upload-page">`) || !strings.Contains(body, `<label class="dropzone"`) {
+		t.Fatalf("upload form is missing its work-surface structure: status=%d body=%s", page.Code, body)
+	}
+	if !strings.Contains(body, `<option value="published" selected>Published — visible immediately</option>`) {
+		t.Fatalf("upload form does not default to published: %s", body)
 	}
 }
 
