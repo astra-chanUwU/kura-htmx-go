@@ -522,6 +522,17 @@ func TestTemplatesUseVendoredHTMX(t *testing.T) {
 	}
 }
 
+func TestUploadPreviewBlobURLsAreAllowedByContentSecurityPolicy(t *testing.T) {
+	server, _ := testServer(t)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/", nil))
+
+	policy := response.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "img-src 'self' data: blob:") {
+		t.Fatalf("image Content-Security-Policy %q does not allow local blob previews", policy)
+	}
+}
+
 func testServer(t *testing.T) (*Server, *archive.Store) {
 	t.Helper()
 	root := t.TempDir()
