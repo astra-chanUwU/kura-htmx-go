@@ -911,6 +911,64 @@ func TestFavoriteHTMXUpdatesControlWithoutNavigation(t *testing.T) {
 	}
 }
 
+func TestFavoritesPageRendersAndRemovesOnlySelectedPost(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	viewer, _ := store.Register(ctx, "favorites-page", "favorites page password")
+	other, _ := store.Register(ctx, "other-favorites", "other favorites password")
+	first := insertPublishedPost(t, store, "favorites-first")
+	second := insertPublishedPost(t, store, "favorites-second")
+	third := insertPublishedPost(t, store, "favorites-other")
+	if err := store.SetFavorite(ctx, viewer.ID, first, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetFavorite(ctx, viewer.ID, second, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetFavorite(ctx, other.ID, third, true); err != nil {
+		t.Fatal(err)
+	}
+	session, _ := store.NewSession(ctx, &viewer.ID)
+	handler := server.Handler()
+
+	page := sessionRequest(t, handler, "GET", "/favorites", nil, session)
+	body := page.Body.String()
+	if page.Code != http.StatusOK || !strings.Contains(body, "Favorites") || !strings.Contains(body, `data-favorite-card="`+strconv.FormatInt(first, 10)+`"`) || !strings.Contains(body, `data-favorite-card="`+strconv.FormatInt(second, 10)+`"`) || strings.Contains(body, `data-favorite-card="`+strconv.FormatInt(third, 10)+`"`) {
+		t.Fatalf("favorites page is not private or complete: status=%d body=%s", page.Code, body)
+	}
+	removePath := "/favorites/" + strconv.FormatInt(first, 10) + "/remove"
+	request := httptest.NewRequest("POST", removePath, strings.NewReader(url.Values{"csrf": {session.CSRF}}.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Location") != "" || response.Body.String() != "" || strings.Contains(response.Body.String(), `data-favorite-card="`+strconv.FormatInt(first, 10)+`"`) {
+		t.Fatalf("HTMX removal did not replace the selected card: status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	remaining, err := store.Favorites(ctx, viewer.ID)
+	if err != nil || len(remaining) != 1 || remaining[0].ID != second {
+		t.Fatalf("removal changed the wrong favorites: %+v err=%v", remaining, err)
+	}
+	fallback := sessionRequest(t, handler, "POST", "/favorites/"+strconv.FormatInt(second, 10)+"/remove", nil, session)
+	if fallback.Code != http.StatusSeeOther || fallback.Header().Get("Location") != "/favorites" {
+		t.Fatalf("non-HTMX removal did not redirect: status=%d location=%q", fallback.Code, fallback.Header().Get("Location"))
+	}
+}
+
+func insertPublishedPost(t *testing.T, store *archive.Store, hash string) int64 {
+	t.Helper()
+	result, err := store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,published_at) VALUES('published',?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`, "originals/"+hash+".png", "thumbs/"+hash+".jpg", "image/png", 1, 1, 1, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestAdminHTMXUpdatesAccountListWithoutNavigation(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()

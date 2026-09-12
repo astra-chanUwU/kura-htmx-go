@@ -203,6 +203,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /posts/grid", s.grid)
 	mux.HandleFunc("GET /posts/{id}", s.post)
 	mux.HandleFunc("POST /posts/{id}/favorite", s.favorite)
+	mux.HandleFunc("GET /favorites", s.favorites)
+	mux.HandleFunc("POST /favorites/{id}/remove", s.removeFavorite)
 	mux.HandleFunc("POST /posts/{id}/pools", s.addPostToPool)
 	mux.HandleFunc("GET /posts/{id}/edit", s.editPost)
 	mux.HandleFunc("POST /posts/{id}/edit", s.updatePost)
@@ -578,6 +580,47 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", id), http.StatusSeeOther)
+}
+
+func (s *Server) favorites(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	posts, err := s.store.Favorites(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "favorites unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "favorites", viewData{Title: "Favorites — Kura", ActiveNav: "favorites", Posts: posts})
+}
+
+func (s *Server) removeFavorite(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	id, err := postID(r)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err = s.store.SetFavorite(r.Context(), user.ID, id, false); err != nil {
+		http.Error(w, "favorite could not be removed", http.StatusInternalServerError)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		posts, err := s.store.Favorites(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, "favorites could not be refreshed", http.StatusInternalServerError)
+			return
+		}
+		if len(posts) == 0 {
+			s.render(w, r, "favorites-empty", viewData{})
+		}
+		return
+	}
+	http.Redirect(w, r, "/favorites", http.StatusSeeOther)
 }
 
 func (s *Server) addPostToPool(w http.ResponseWriter, r *http.Request) {
