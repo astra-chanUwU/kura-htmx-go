@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -967,6 +968,156 @@ func insertPublishedPost(t *testing.T, store *archive.Store, hash string) int64 
 		t.Fatal(err)
 	}
 	return id
+}
+
+func TestServeMediaRequiresVisiblePost(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	owner, err := store.Register(ctx, "media-owner", "media owner password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.Register(ctx, "media-other", "media other password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.BootstrapSuperAdmin(ctx, "media-admin", "media admin password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moderator, err := store.Register(ctx, "media-moderator", "media moderator password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(ctx, admin, moderator.ID, "moderator"); err != nil {
+		t.Fatal(err)
+	}
+	post, err := store.CreatePost(ctx, archive.NewPost{
+		UploaderID: owner.ID, Status: "draft", OriginalPath: "originals/2026/09/media.png", ThumbnailPath: "thumbs/2026/09/media.jpg",
+		MIMEType: "image/png", Width: 1, Height: 1, ByteSize: 16, SHA256: "media-visibility",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeMediaFile(t, server.mediaRoot, post.OriginalPath, "original-content")
+	writeMediaFile(t, server.mediaRoot, post.ThumbnailPath, "thumb-content")
+
+	handler := server.Handler()
+	var initialSessionCount int
+	if err = store.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&initialSessionCount); err != nil {
+		t.Fatal(err)
+	}
+	for i, path := range []string{"/media/originals/2026/09/media.png", "/media/thumbs/2026/09/media.jpg"} {
+		if response := mediaRequest(t, handler, "GET", path, nil, nil); response.Code != http.StatusNotFound {
+			t.Fatalf("anonymous draft media request %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+		if i == 0 {
+			var sessionCount int
+			if err = store.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&sessionCount); err != nil {
+				t.Fatal(err)
+			}
+			if sessionCount != initialSessionCount {
+				t.Fatalf("anonymous media request changed session count from %d to %d", initialSessionCount, sessionCount)
+			}
+		}
+		otherSession, err := store.NewSession(ctx, &other.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response := mediaRequest(t, handler, "GET", path, nil, &otherSession); response.Code != http.StatusNotFound {
+			t.Fatalf("other viewer draft media request %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+		ownerSession, err := store.NewSession(ctx, &owner.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response := mediaRequest(t, handler, "GET", path, nil, &ownerSession); response.Code != http.StatusOK {
+			t.Fatalf("owner draft media request %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+		moderatorSession, err := store.NewSession(ctx, &moderator.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response := mediaRequest(t, handler, "GET", path, nil, &moderatorSession); response.Code != http.StatusOK {
+			t.Fatalf("moderator draft media request %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+
+	if err = store.UpdatePost(ctx, post.ID, "", "", "published"); err != nil {
+		t.Fatal(err)
+	}
+	published := mediaRequest(t, handler, "GET", "/media/originals/2026/09/media.png", nil, nil)
+	if published.Code != http.StatusOK || published.Body.String() != "original-content" {
+		t.Fatalf("published original was not anonymously served: status=%d body=%q", published.Code, published.Body.String())
+	}
+	if published.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("media cache policy=%q, want private, no-store", published.Header().Get("Cache-Control"))
+	}
+	head := mediaRequest(t, handler, "HEAD", "/media/originals/2026/09/media.png", nil, nil)
+	if head.Code != http.StatusOK || head.Body.Len() != 0 {
+		t.Fatalf("HEAD media request status=%d body=%q", head.Code, head.Body.String())
+	}
+	ranged := mediaRequest(t, handler, "GET", "/media/originals/2026/09/media.png", http.Header{"Range": {"bytes=0-7"}}, nil)
+	if ranged.Code != http.StatusPartialContent || ranged.Body.String() != "original" {
+		t.Fatalf("range media request status=%d body=%q", ranged.Code, ranged.Body.String())
+	}
+
+	if err = store.UpdatePost(ctx, post.ID, "", "", "draft"); err != nil {
+		t.Fatal(err)
+	}
+	if response := mediaRequest(t, handler, "GET", "/media/originals/2026/09/media.png", nil, nil); response.Code != http.StatusNotFound {
+		t.Fatalf("unpublished media remained public: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err = store.SoftDeletePost(ctx, post.ID); err != nil {
+		t.Fatal(err)
+	}
+	ownerSession, err := store.NewSession(ctx, &owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := mediaRequest(t, handler, "GET", "/media/thumbs/2026/09/media.jpg", nil, &ownerSession); response.Code != http.StatusNotFound {
+		t.Fatalf("deleted thumbnail remained available to owner: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	writeMediaFile(t, server.mediaRoot, "originals/unreferenced.png", "unreferenced")
+	writeMediaFile(t, server.mediaRoot, "thumbs/unreferenced.jpg", "unreferenced thumb")
+	for _, path := range []string{
+		"/media/originals/unreferenced.png",
+		"/media/thumbs/unreferenced.jpg",
+		"/media/originals/missing.png",
+		"/media/originals/../thumbs/unreferenced.png",
+	} {
+		if response := mediaRequest(t, handler, "GET", path, nil, nil); response.Code == http.StatusOK {
+			t.Fatalf("unsafe or unreferenced media request %s served content: body=%s", path, response.Body.String())
+		}
+	}
+}
+
+func writeMediaFile(t *testing.T, root, rel, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mediaRequest(t *testing.T, handler http.Handler, method, path string, headers http.Header, session *archive.Session) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, nil)
+	for key, values := range headers {
+		for _, value := range values {
+			request.Header.Add(key, value)
+		}
+	}
+	if session != nil {
+		request.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 func TestAdminHTMXUpdatesAccountListWithoutNavigation(t *testing.T) {

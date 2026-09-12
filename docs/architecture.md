@@ -26,7 +26,7 @@ SQLite foreign keys are enabled. Hashes are unique. Tag names and pool slugs are
 
 ## Filesystem contract
 
-The database stores paths relative to the media root, never arbitrary absolute paths. Real uploads use `originals/YYYY/MM/<sha256>.<ext>` and `thumbs/YYYY/MM/<sha256>.jpg`; demo data uses `demo/` beneath those roots. Ingestion streams to a private temporary directory, validates byte size, MIME and decoded dimensions, creates the thumbnail, and atomically renames both files into place. Database deletion is logical and never silently deletes media; filesystem reconciliation remains an explicit maintenance operation.
+The database stores paths relative to the media root, never arbitrary absolute paths. Real uploads use `originals/YYYY/MM/<sha256>.<ext>` and `thumbs/YYYY/MM/<sha256>.jpg`; demo data uses `demo/` beneath those roots. Ingestion streams to a private temporary directory, validates byte size, MIME and decoded dimensions, creates the thumbnail, and atomically renames both files into place. The media routes resolve only paths referenced by a non-deleted post visible to the current requester, and use non-storing cache headers so publication and authorization checks run again for later requests. Database deletion is logical and never silently deletes media; filesystem reconciliation remains an explicit maintenance operation.
 
 Account suspension deletes that account's active sessions but does not delete the account row. Upload ownership uses a restrictive foreign key, so an uploader account cannot be removed and silently orphan its permanent attribution. Legacy/demo posts may have no owner; every real upload records one.
 

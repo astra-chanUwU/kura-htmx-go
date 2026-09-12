@@ -299,6 +299,20 @@ func (s *Store) PostForUser(ctx context.Context, id, viewerID int64, canModerate
 	return p, rows.Err()
 }
 
+func (s *Store) MediaVisibleToUser(ctx context.Context, kind, path string, viewerID int64, canModerate bool) (bool, error) {
+	column := "original_path"
+	switch kind {
+	case "originals":
+	case "thumbs":
+		column = "thumbnail_path"
+	default:
+		return false, errors.New("invalid media kind")
+	}
+	var visible int
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts p WHERE p.`+column+`=? AND p.deleted_at IS NULL AND (p.status='published' OR p.uploader_id=? OR ?))`, path, viewerID, canModerate).Scan(&visible)
+	return visible != 0, err
+}
+
 func (s *Store) Tags(ctx context.Context) ([]Tag, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category,count(p.id) FROM tags t LEFT JOIN post_tags pt ON pt.tag_id=t.id LEFT JOIN posts p ON p.id=pt.post_id AND p.status='published' AND p.deleted_at IS NULL GROUP BY t.id HAVING count(p.id)>0 ORDER BY t.category,count(p.id) DESC,t.name LIMIT 100`)
 	if err != nil {

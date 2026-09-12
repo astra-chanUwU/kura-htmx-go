@@ -265,7 +265,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) withSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/static/") || strings.HasPrefix(r.URL.Path, "/media/") {
+		if strings.HasPrefix(r.URL.Path, "/static/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -275,6 +275,10 @@ func (s *Server) withSession(next http.Handler) http.Handler {
 			session, err = s.store.Session(r.Context(), cookie.Value)
 		}
 		if err != nil || cookie == nil {
+			if strings.HasPrefix(r.URL.Path, "/media/") {
+				next.ServeHTTP(w, r)
+				return
+			}
 			session, err = s.store.NewSession(r.Context(), nil)
 			if err != nil {
 				http.Error(w, "session unavailable", http.StatusInternalServerError)
@@ -1618,6 +1622,15 @@ func (s *Server) serveMedia(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	visible, err := s.store.MediaVisibleToUser(r.Context(), kind, filepath.ToSlash(filepath.Join(kind, rel)), viewerID(r), currentUser(r) != nil && currentUser(r).CanUpload())
+	if err != nil {
+		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		return
+	}
+	if !visible {
+		http.NotFound(w, r)
+		return
+	}
 	root, err := filepath.Abs(s.mediaRoot)
 	if err != nil {
 		http.NotFound(w, r)
@@ -1628,5 +1641,6 @@ func (s *Server) serveMedia(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	http.ServeFile(w, r, path)
 }
