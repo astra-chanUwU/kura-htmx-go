@@ -1,0 +1,85 @@
+package web
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"kura/internal/archive"
+)
+
+func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+	users, err := s.store.Users(r.Context())
+	if err != nil {
+		http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "admin", viewData{Title: "Accounts — Kura", ActiveNav: "admin", Users: users})
+}
+
+func targetID(r *http.Request) (int64, error) { return strconv.ParseInt(r.PathValue("id"), 10, 64) }
+
+func (s *Server) adminRole(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err == nil {
+		err = s.store.SetUserRole(r.Context(), *actor, id, r.FormValue("role"))
+	}
+	s.adminResult(w, r, err)
+}
+
+func (s *Server) adminSuspension(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err == nil {
+		err = s.store.SetUserSuspended(r.Context(), *actor, id, r.FormValue("suspended") == "1")
+	}
+	s.adminResult(w, r, err)
+}
+
+func (s *Server) adminTransfer(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err == nil {
+		err = s.store.TransferSuperAdmin(r.Context(), *actor, id)
+	}
+	s.adminResult(w, r, err)
+}
+
+func (s *Server) adminResult(w http.ResponseWriter, r *http.Request, err error) {
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, archive.ErrPermission) {
+			status = http.StatusForbidden
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if isHTMX(r) {
+		users, err := s.store.Users(r.Context())
+		if err != nil {
+			http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+			return
+		}
+		actor, err := s.store.User(r.Context(), currentUser(r).ID)
+		if err != nil {
+			http.Error(w, "account unavailable", http.StatusInternalServerError)
+			return
+		}
+		s.render(w, r, "admin-account-list", viewData{Users: users, User: &actor})
+		return
+	}
+	http.Redirect(w, r, "/admin/accounts", http.StatusSeeOther)
+}
