@@ -15,7 +15,7 @@ func (s *Server) favorite(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err = s.store.SetFavorite(r.Context(), user.ID, id, r.FormValue("favorite") == "1"); err != nil {
+	if err = s.store.SetFavorite(r.Context(), *user, id, r.FormValue("favorite") == "1"); err != nil {
 		http.Error(w, "favorite could not be updated", http.StatusBadRequest)
 		return
 	}
@@ -54,7 +54,7 @@ func (s *Server) removeFavorite(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err = s.store.SetFavorite(r.Context(), user.ID, id, false); err != nil {
+	if err = s.store.SetFavorite(r.Context(), *user, id, false); err != nil {
 		http.Error(w, "favorite could not be removed", http.StatusInternalServerError)
 		return
 	}

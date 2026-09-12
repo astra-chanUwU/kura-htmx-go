@@ -32,8 +32,9 @@ type Ingestor struct {
 	Store *archive.Store
 }
 
-func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multipart.FileHeader, uploaderID int64, source, tags, status string) (archive.Post, error) {
-	if uploaderID == 0 {
+func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multipart.FileHeader, actor archive.User, source, tags, status string) (archive.Post, error) {
+	current, err := i.Store.User(ctx, actor.ID)
+	if err != nil || !current.CanUpload() {
 		return archive.Post{}, archive.ErrPermission
 	}
 	if err := os.MkdirAll(filepath.Join(i.Root, ".incoming"), 0700); err != nil {
@@ -134,8 +135,8 @@ func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multi
 	if err = moveNoReplace(thumbTempName, filepath.Join(i.Root, thumbRel)); err != nil {
 		return archive.Post{}, err
 	}
-	post, err := i.Store.CreatePost(ctx, archive.NewPost{
-		UploaderID: uploaderID, Status: status, OriginalPath: filepath.ToSlash(originalRel), ThumbnailPath: filepath.ToSlash(thumbRel),
+	post, err := i.Store.CreatePost(ctx, current, archive.NewPost{
+		Status: status, OriginalPath: filepath.ToSlash(originalRel), ThumbnailPath: filepath.ToSlash(thumbRel),
 		MIMEType: mimeType, Width: bounds.Dx(), Height: bounds.Dy(), ByteSize: written, SHA256: hash, Source: source, Tags: strings.Fields(tags),
 	})
 	if err != nil {

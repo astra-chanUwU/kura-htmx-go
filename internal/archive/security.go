@@ -16,6 +16,8 @@ var (
 	ErrInvalidRecovery   = errors.New("invalid username or recovery code")
 	ErrInvalidChallenge  = errors.New("authentication request expired or already used")
 	ErrLastAuthenticator = errors.New("the account must retain a password or passkey")
+	ErrFreshPasskey      = errors.New("fresh passkey verification required")
+	ErrConfirmation      = errors.New("confirmation required")
 	ErrInvalidBootstrap  = errors.New("setup link expired or already used")
 )
 
@@ -121,14 +123,25 @@ func (s *Store) BootstrapSuperAdminWithPassword(ctx context.Context, token, user
 	return s.User(ctx, id)
 }
 
-func (s *Store) ReplaceRecoveryCode(ctx context.Context, userID int64) (string, error) {
+func (s *Store) ReplaceRecoveryCode(ctx context.Context, actor User) (string, error) {
 	code, err := randomToken(24)
 	if err != nil {
 		return "", err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO recovery_codes(user_id,code_hash,created_at) VALUES(?,?,CURRENT_TIMESTAMP)
-		ON CONFLICT(user_id) DO UPDATE SET code_hash=excluded.code_hash,created_at=excluded.created_at`, userID, hashToken(code))
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return "", ErrPermission
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO recovery_codes(user_id,code_hash,created_at) VALUES(?,?,CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id) DO UPDATE SET code_hash=excluded.code_hash,created_at=excluded.created_at`, current.ID, hashToken(code)); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
 		return "", err
 	}
 	return code, nil
@@ -237,7 +250,7 @@ func (s *Store) CompletePasskeyRecovery(ctx context.Context, userID int64, expec
 	return replacement, nil
 }
 
-func (s *Store) AddPasskey(ctx context.Context, userID int64, name string, credential webauthn.Credential) (Passkey, error) {
+func (s *Store) AddPasskey(ctx context.Context, actor User, name string, credential webauthn.Credential) (Passkey, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 64 {
 		return Passkey{}, errors.New("passkey name must be between 1 and 64 characters")
@@ -249,12 +262,24 @@ func (s *Store) AddPasskey(ctx context.Context, userID int64, name string, crede
 	if err != nil {
 		return Passkey{}, err
 	}
-	result, err := s.DB.ExecContext(ctx, `INSERT INTO passkey_credentials(user_id,credential_id,name,credential_json) VALUES(?,?,?,?)`, userID, credential.ID, name, body)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Passkey{}, err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return Passkey{}, ErrPermission
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO passkey_credentials(user_id,credential_id,name,credential_json) VALUES(?,?,?,?)`, current.ID, credential.ID, name, body)
 	if err != nil {
 		return Passkey{}, err
 	}
 	id, _ := result.LastInsertId()
-	return s.passkey(ctx, userID, id)
+	if err = tx.Commit(); err != nil {
+		return Passkey{}, err
+	}
+	return s.passkey(ctx, current.ID, id)
 }
 
 func (s *Store) CreatePasskeyOnlyAccount(ctx context.Context, username, name string, credential webauthn.Credential) (User, string, error) {
@@ -472,24 +497,28 @@ func (s *Store) UpdatePasskey(ctx context.Context, userID int64, credential weba
 	return nil
 }
 
-func (s *Store) RemovePasskey(ctx context.Context, userID, passkeyID int64) error {
+func (s *Store) RemovePasskey(ctx context.Context, actor User, passkeyID int64) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
 	var password sql.NullString
 	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id=?`, userID).Scan(&password); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id=?`, current.ID).Scan(&password); err != nil {
 		return err
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM passkey_credentials WHERE user_id=?`, userID).Scan(&count); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM passkey_credentials WHERE user_id=?`, current.ID).Scan(&count); err != nil {
 		return err
 	}
 	if !password.Valid && count <= 1 {
 		return ErrLastAuthenticator
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM passkey_credentials WHERE id=? AND user_id=?`, passkeyID, userID)
+	result, err := tx.ExecContext(ctx, `DELETE FROM passkey_credentials WHERE id=? AND user_id=?`, passkeyID, current.ID)
 	if err != nil {
 		return err
 	}
@@ -499,38 +528,64 @@ func (s *Store) RemovePasskey(ctx context.Context, userID, passkeyID int64) erro
 	return tx.Commit()
 }
 
-func (s *Store) RemovePassword(ctx context.Context, userID int64, keepSessionToken string) error {
+func (s *Store) RemovePassword(ctx context.Context, actor User, keepSessionToken, confirmation string) error {
+	if confirmation != "remove" {
+		return ErrConfirmation
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
+	var fresh sql.NullString
+	if err = tx.QueryRowContext(ctx, `SELECT fresh_passkey_at FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?`, hashToken(keepSessionToken), current.ID, time.Now().UTC().Format(time.RFC3339)).Scan(&fresh); err != nil || !fresh.Valid {
+		return ErrFreshPasskey
+	}
+	verified, err := time.Parse(time.RFC3339Nano, fresh.String)
+	if err != nil || !verified.After(time.Now().UTC().Add(-5*time.Minute)) {
+		return ErrFreshPasskey
+	}
 	var keys, recovery int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM passkey_credentials WHERE user_id=?`, userID).Scan(&keys); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM passkey_credentials WHERE user_id=?`, current.ID).Scan(&keys); err != nil {
 		return err
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM recovery_codes WHERE user_id=?`, userID).Scan(&recovery); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM recovery_codes WHERE user_id=?`, current.ID).Scan(&recovery); err != nil {
 		return err
 	}
 	if keys == 0 || recovery == 0 {
 		return ErrLastAuthenticator
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE users SET password_hash=NULL WHERE id=?`, userID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET password_hash=NULL WHERE id=?`, current.ID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, userID, hashToken(keepSessionToken)); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, current.ID, hashToken(keepSessionToken)); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) SetPassword(ctx context.Context, userID int64, password string) error {
+func (s *Store) SetPassword(ctx context.Context, actor User, password string) error {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, hash, userID)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, hash, current.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SecurityStatus(ctx context.Context, userID int64) (AccountSecurity, error) {
@@ -610,7 +665,18 @@ func (s *Store) SessionHasFreshPasskey(ctx context.Context, token string, maxAge
 	return verified.After(time.Now().UTC().Add(-maxAge)), nil
 }
 
-func (s *Store) RevokeOtherSessions(ctx context.Context, userID int64, keepSessionToken string) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, userID, hashToken(keepSessionToken))
-	return err
+func (s *Store) RevokeOtherSessions(ctx context.Context, actor User, keepSessionToken string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, current.ID, hashToken(keepSessionToken)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

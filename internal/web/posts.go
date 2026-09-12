@@ -2,6 +2,7 @@ package web
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -115,7 +116,8 @@ func (s *Server) editPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updatePost(w http.ResponseWriter, r *http.Request) {
-	if s.requireModerator(w, r) == nil {
+	user := s.requireModerator(w, r)
+	if user == nil {
 		return
 	}
 	id, err := postID(r)
@@ -123,7 +125,7 @@ func (s *Server) updatePost(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err = s.store.UpdatePost(r.Context(), id, r.FormValue("source"), r.FormValue("tags"), r.FormValue("status")); err != nil {
+	if err = s.store.UpdatePost(r.Context(), *user, id, r.FormValue("source"), r.FormValue("tags"), r.FormValue("status")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -149,11 +151,11 @@ func (s *Server) deletePost(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !user.CanDelete(p) {
-		http.Error(w, "you may delete only your own uploads", http.StatusForbidden)
-		return
-	}
-	if err = s.store.SoftDeletePost(r.Context(), p.ID); err != nil {
+	if err = s.store.SoftDeletePost(r.Context(), *user, p.ID); err != nil {
+		if errors.Is(err, archive.ErrPermission) {
+			http.Error(w, "you may delete only your own uploads", http.StatusForbidden)
+			return
+		}
 		http.Error(w, "post could not be deleted", http.StatusInternalServerError)
 		return
 	}

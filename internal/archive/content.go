@@ -47,7 +47,7 @@ func (s *Store) PostIDByHash(ctx context.Context, hash string) (int64, error) {
 	return id, err
 }
 
-func (s *Store) CreatePost(ctx context.Context, input NewPost) (Post, error) {
+func (s *Store) CreatePost(ctx context.Context, actor User, input NewPost) (Post, error) {
 	if input.Status != "draft" && input.Status != "published" {
 		return Post{}, errors.New("invalid post status")
 	}
@@ -56,11 +56,15 @@ func (s *Store) CreatePost(ctx context.Context, input NewPost) (Post, error) {
 		return Post{}, err
 	}
 	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanUpload() {
+		return Post{}, ErrPermission
+	}
 	var published any
 	if input.Status == "published" {
 		published = time.Now().UTC().Format(time.RFC3339)
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source,published_at,uploader_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, input.Status, input.OriginalPath, input.ThumbnailPath, input.MIMEType, input.Width, input.Height, input.ByteSize, input.SHA256, strings.TrimSpace(input.Source), published, input.UploaderID)
+	result, err := tx.ExecContext(ctx, `INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source,published_at,uploader_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, input.Status, input.OriginalPath, input.ThumbnailPath, input.MIMEType, input.Width, input.Height, input.ByteSize, input.SHA256, strings.TrimSpace(input.Source), published, current.ID)
 	if err != nil {
 		return Post{}, err
 	}
@@ -76,10 +80,10 @@ func (s *Store) CreatePost(ctx context.Context, input NewPost) (Post, error) {
 	if err = tx.Commit(); err != nil {
 		return Post{}, err
 	}
-	return s.PostForUser(ctx, id, input.UploaderID, true)
+	return s.PostForUser(ctx, id, current.ID, true)
 }
 
-func (s *Store) UpdatePost(ctx context.Context, id int64, source, tags, status string) error {
+func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, tags, status string) error {
 	if status != "draft" && status != "published" {
 		return errors.New("invalid post status")
 	}
@@ -88,6 +92,17 @@ func (s *Store) UpdatePost(ctx context.Context, id int64, source, tags, status s
 		return err
 	}
 	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanUpload() {
+		return ErrPermission
+	}
+	var exists int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts WHERE id=? AND deleted_at IS NULL)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return sql.ErrNoRows
+	}
 	var published any
 	if status == "published" {
 		published = time.Now().UTC().Format(time.RFC3339)
@@ -109,28 +124,51 @@ func (s *Store) UpdatePost(ctx context.Context, id int64, source, tags, status s
 	return tx.Commit()
 }
 
-func (s *Store) SoftDeletePost(ctx context.Context, id int64) error {
-	result, err := s.DB.ExecContext(ctx, `UPDATE posts SET deleted_at=? WHERE id=? AND deleted_at IS NULL`, time.Now().UTC().Format(time.RFC3339), id)
+func (s *Store) SoftDeletePost(ctx context.Context, actor User, id int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanUpload() {
+		return ErrPermission
 	}
-	return nil
-}
-
-func (s *Store) SetFavorite(ctx context.Context, userID, postID int64, favorite bool) error {
-	if favorite {
-		_, err := s.DB.ExecContext(ctx, `INSERT INTO favorites(post_id,user_id) SELECT id,? FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL ON CONFLICT(post_id,user_id) DO NOTHING`, userID, postID)
+	var uploaderID sql.NullInt64
+	if err = tx.QueryRowContext(ctx, `SELECT uploader_id FROM posts WHERE id=? AND deleted_at IS NULL`, id).Scan(&uploaderID); err != nil {
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM favorites WHERE user_id=? AND post_id=?`, userID, postID)
-	return err
+	if current.Role != "admin" && (!uploaderID.Valid || uploaderID.Int64 != current.ID) {
+		return ErrPermission
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE posts SET deleted_at=? WHERE id=? AND deleted_at IS NULL`, time.Now().UTC().Format(time.RFC3339), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SetFavorite(ctx context.Context, actor User, postID int64, favorite bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
+	if favorite {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO favorites(post_id,user_id) SELECT id,? FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL ON CONFLICT(post_id,user_id) DO NOTHING`, current.ID, postID); err != nil {
+			return err
+		}
+	} else if _, err = tx.ExecContext(ctx, `DELETE FROM favorites WHERE user_id=? AND post_id=?`, current.ID, postID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Favorites(ctx context.Context, userID int64) ([]Post, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM posts p JOIN favorites f ON f.post_id=p.id WHERE f.user_id=? AND p.status='published' AND p.deleted_at IS NULL ORDER BY f.created_at DESC`, userID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM posts p JOIN favorites f ON f.post_id=p.id JOIN users u ON u.id=f.user_id WHERE f.user_id=? AND u.suspended_at IS NULL AND p.status='published' AND p.deleted_at IS NULL ORDER BY f.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +189,7 @@ func poolSlug(name string) string {
 	return strings.Trim(slug, "-")
 }
 
-func (s *Store) CreatePool(ctx context.Context, ownerID int64, name, description, status, postIDs string) (Pool, error) {
+func (s *Store) CreatePool(ctx context.Context, actor User, name, description, status, postIDs string) (Pool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 120 || (status != "draft" && status != "published") {
 		return Pool{}, errors.New("invalid pool")
@@ -165,7 +203,11 @@ func (s *Store) CreatePool(ctx context.Context, ownerID int64, name, description
 		return Pool{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `INSERT INTO pools(slug,name,description,owner_id,status) VALUES(?,?,?,?,?)`, slug, name, strings.TrimSpace(description), ownerID, status)
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return Pool{}, ErrPermission
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO pools(slug,name,description,owner_id,status) VALUES(?,?,?,?,?)`, slug, name, strings.TrimSpace(description), current.ID, status)
 	if err != nil {
 		return Pool{}, err
 	}
@@ -176,17 +218,21 @@ func (s *Store) CreatePool(ctx context.Context, ownerID int64, name, description
 	if err = tx.Commit(); err != nil {
 		return Pool{}, err
 	}
-	return s.Pool(ctx, slug, ownerID)
+	return s.Pool(ctx, slug, current.ID)
 }
 
-func (s *Store) AddPostToPool(ctx context.Context, ownerID int64, slug string, postID int64) error {
+func (s *Store) AddPostToPool(ctx context.Context, actor User, slug string, postID int64) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
 	var poolID int64
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM pools WHERE slug=? AND owner_id=?`, slug, ownerID).Scan(&poolID); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM pools WHERE slug=? AND owner_id=?`, slug, current.ID).Scan(&poolID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrPermission
 		}
@@ -207,7 +253,7 @@ func (s *Store) AddPostToPool(ctx context.Context, ownerID int64, slug string, p
 }
 
 func (s *Store) OwnedPoolsForPost(ctx context.Context, ownerID, postID int64) ([]Pool, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,po.owner_id,EXISTS(SELECT 1 FROM pool_posts pp WHERE pp.pool_id=po.id AND pp.post_id=?) FROM pools po WHERE po.owner_id=? ORDER BY po.status,po.name`, postID, ownerID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,po.owner_id,EXISTS(SELECT 1 FROM pool_posts pp WHERE pp.pool_id=po.id AND pp.post_id=?) FROM pools po WHERE po.owner_id=? AND EXISTS(SELECT 1 FROM users u WHERE u.id=? AND u.suspended_at IS NULL) ORDER BY po.status,po.name`, postID, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +295,7 @@ func replacePoolPosts(ctx context.Context, tx *sql.Tx, poolID int64, raw string)
 
 func (s *Store) Pool(ctx context.Context, slug string, viewerID int64) (Pool, error) {
 	var pool Pool
-	err := s.DB.QueryRowContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,COALESCE(po.owner_id,0),COALESCE(u.username,'') FROM pools po LEFT JOIN users u ON u.id=po.owner_id WHERE po.slug=? AND (po.status='published' OR po.owner_id=?)`, slug, viewerID).Scan(&pool.ID, &pool.Slug, &pool.Name, &pool.Description, &pool.Status, &pool.OwnerID, &pool.Owner)
+	err := s.DB.QueryRowContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,COALESCE(po.owner_id,0),COALESCE(u.username,'') FROM pools po LEFT JOIN users u ON u.id=po.owner_id WHERE po.slug=? AND (po.status='published' OR (po.owner_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)))`, slug, viewerID, viewerID).Scan(&pool.ID, &pool.Slug, &pool.Name, &pool.Description, &pool.Status, &pool.OwnerID, &pool.Owner)
 	if err != nil {
 		return pool, err
 	}
@@ -269,7 +315,7 @@ func (s *Store) Pool(ctx context.Context, slug string, viewerID int64) (Pool, er
 	return pool, rows.Err()
 }
 
-func (s *Store) UpdatePool(ctx context.Context, ownerID int64, slug, name, description, status, postIDs string) error {
+func (s *Store) UpdatePool(ctx context.Context, actor User, slug, name, description, status, postIDs string) error {
 	if strings.TrimSpace(name) == "" || (status != "draft" && status != "published") {
 		return errors.New("invalid pool")
 	}
@@ -278,7 +324,11 @@ func (s *Store) UpdatePool(ctx context.Context, ownerID int64, slug, name, descr
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE pools SET name=?,description=?,status=? WHERE slug=? AND owner_id=?`, strings.TrimSpace(name), strings.TrimSpace(description), status, slug, ownerID)
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil {
+		return ErrPermission
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE pools SET name=?,description=?,status=? WHERE slug=? AND owner_id=?`, strings.TrimSpace(name), strings.TrimSpace(description), status, slug, current.ID)
 	if err != nil {
 		return err
 	}

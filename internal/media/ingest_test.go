@@ -42,6 +42,17 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	admin, err := store.BootstrapSuperAdmin(context.Background(), "media-root", "media root password long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(context.Background(), admin, user.ID, "moderator"); err != nil {
+		t.Fatal(err)
+	}
+	user, err = store.User(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	img := image.NewRGBA(image.Rect(0, 0, 12, 8))
 	for y := 0; y < 8; y++ {
 		for x := 0; x < 12; x++ {
@@ -53,7 +64,7 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ingestor := Ingestor{Root: filepath.Join(root, "media"), Store: store}
-	post, err := ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), nil, user.ID, "", "blue sample", "published")
+	post, err := ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), nil, user, "", "blue sample", "published")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +76,11 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 			t.Fatalf("media missing for %q: %v", rel, statErr)
 		}
 	}
-	_, err = ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), nil, user.ID, "", "", "draft")
+	_, err = ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), nil, user, "", "", "draft")
 	if !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("duplicate upload was not rejected: %v", err)
 	}
-	if err = store.SoftDeletePost(context.Background(), post.ID); err != nil {
+	if err = store.SoftDeletePost(context.Background(), user, post.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(filepath.Join(ingestor.Root, filepath.FromSlash(post.OriginalPath))); err != nil {

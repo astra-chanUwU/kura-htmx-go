@@ -290,7 +290,7 @@ func (s *Server) passkeyAddFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "passkey registration failed", http.StatusBadRequest)
 		return
 	}
-	if _, err = s.store.AddPasskey(r.Context(), user.ID, state.Name, *credential); err != nil {
+	if _, err = s.store.AddPasskey(r.Context(), *user, state.Name, *credential); err != nil {
 		http.Error(w, "passkey registration failed", http.StatusBadRequest)
 		return
 	}
@@ -301,7 +301,7 @@ func (s *Server) passkeyAddFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	recovery := ""
 	if !status.RecoveryCodeActive {
-		recovery, err = s.store.ReplaceRecoveryCode(r.Context(), user.ID)
+		recovery, err = s.store.ReplaceRecoveryCode(r.Context(), *user)
 		if err != nil {
 			http.Error(w, "recovery code unavailable", http.StatusInternalServerError)
 			return
@@ -352,7 +352,7 @@ func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err = s.store.RemovePasskey(r.Context(), user.ID, id); err != nil {
+	if err = s.store.RemovePasskey(r.Context(), *user, id); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

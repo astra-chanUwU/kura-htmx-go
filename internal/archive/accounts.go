@@ -188,6 +188,22 @@ func (s *Store) User(ctx context.Context, id int64) (User, error) {
 	return user, err
 }
 
+func scanUser(row interface{ Scan(...any) error }) (User, error) {
+	var user User
+	var super int
+	err := row.Scan(&user.ID, &user.Username, &user.Role, &super, &user.SuspendedAt, &user.CreatedAt)
+	user.IsSuperAdmin = super != 0
+	return user, err
+}
+
+func (s *Store) actorTx(ctx context.Context, tx *sql.Tx, actor User) (User, error) {
+	current, err := scanUser(tx.QueryRowContext(ctx, `SELECT id,username,role,is_super_admin,COALESCE(suspended_at,''),created_at FROM users WHERE id=?`, actor.ID))
+	if err != nil || !current.Active() {
+		return User{}, ErrPermission
+	}
+	return current, nil
+}
+
 func (s *Store) NewSession(ctx context.Context, userID *int64) (Session, error) {
 	_, _ = s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at<=?`, time.Now().UTC().Format(time.RFC3339))
 	token, err := randomToken(32)
@@ -271,45 +287,55 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 }
 
 func (s *Store) SetUserRole(ctx context.Context, actor User, targetID int64, role string) error {
-	if !actor.CanAdminister() || (role != "viewer" && role != "moderator" && role != "admin") {
+	if role != "viewer" && role != "moderator" && role != "admin" {
 		return ErrPermission
-	}
-	target, err := s.User(ctx, targetID)
-	if err != nil {
-		return err
-	}
-	if target.IsSuperAdmin {
-		return ErrLastSuperAdmin
-	}
-	if target.Role == "admin" || role == "admin" {
-		if !actor.IsSuperAdmin {
-			return ErrPermission
-		}
-	}
-	_, err = s.DB.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, targetID)
-	return err
-}
-
-func (s *Store) SetUserSuspended(ctx context.Context, actor User, targetID int64, suspended bool) error {
-	if !actor.CanAdminister() {
-		return ErrPermission
-	}
-	target, err := s.User(ctx, targetID)
-	if err != nil {
-		return err
-	}
-	if target.IsSuperAdmin || (target.Role == "admin" && !actor.IsSuperAdmin) {
-		return ErrPermission
-	}
-	value := any(nil)
-	if suspended {
-		value = time.Now().UTC().Format(time.RFC3339)
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanAdminister() {
+		return ErrPermission
+	}
+	target, err := scanUser(tx.QueryRowContext(ctx, `SELECT id,username,role,is_super_admin,COALESCE(suspended_at,''),created_at FROM users WHERE id=?`, targetID))
+	if err != nil {
+		return err
+	}
+	if target.IsSuperAdmin {
+		return ErrLastSuperAdmin
+	}
+	if (target.Role == "admin" || role == "admin") && !current.IsSuperAdmin {
+		return ErrPermission
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, targetID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SetUserSuspended(ctx context.Context, actor User, targetID int64, suspended bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanAdminister() {
+		return ErrPermission
+	}
+	target, err := scanUser(tx.QueryRowContext(ctx, `SELECT id,username,role,is_super_admin,COALESCE(suspended_at,''),created_at FROM users WHERE id=?`, targetID))
+	if err != nil {
+		return err
+	}
+	if target.IsSuperAdmin || (target.Role == "admin" && !current.IsSuperAdmin) {
+		return ErrPermission
+	}
+	value := any(nil)
+	if suspended {
+		value = time.Now().UTC().Format(time.RFC3339)
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET suspended_at=? WHERE id=?`, value, targetID); err != nil {
 		return err
 	}
@@ -322,22 +348,23 @@ func (s *Store) SetUserSuspended(ctx context.Context, actor User, targetID int64
 }
 
 func (s *Store) TransferSuperAdmin(ctx context.Context, actor User, targetID int64) error {
-	if !actor.Active() || !actor.IsSuperAdmin || actor.ID == targetID {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.IsSuperAdmin || current.ID == targetID {
 		return ErrPermission
 	}
-	target, err := s.User(ctx, targetID)
+	target, err := scanUser(tx.QueryRowContext(ctx, `SELECT id,username,role,is_super_admin,COALESCE(suspended_at,''),created_at FROM users WHERE id=?`, targetID))
 	if err != nil {
 		return err
 	}
 	if !target.Active() {
 		return ErrLastSuperAdmin
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `UPDATE users SET is_super_admin=0 WHERE id=?`, actor.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET is_super_admin=0 WHERE id=?`, current.ID); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET role='admin',is_super_admin=1 WHERE id=?`, target.ID); err != nil {

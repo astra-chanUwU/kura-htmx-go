@@ -219,12 +219,12 @@ func (s *Store) PoolCandidates(ctx context.Context, filter PoolCandidateFilter) 
 	case "all":
 	case "favorites":
 		from += " JOIN favorites f ON f.post_id=p.id"
-		where += " AND f.user_id=?"
-		args = append(args, filter.ViewerID)
+		where += " AND f.user_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)"
+		args = append(args, filter.ViewerID, filter.ViewerID)
 		order = "f.created_at DESC,p.id DESC"
 	case "pool":
 		var poolID int64
-		err := s.DB.QueryRowContext(ctx, `SELECT id FROM pools WHERE slug=? AND (status='published' OR owner_id=?)`, filter.PoolSlug, filter.ViewerID).Scan(&poolID)
+		err := s.DB.QueryRowContext(ctx, `SELECT id FROM pools WHERE slug=? AND (status='published' OR (owner_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)))`, filter.PoolSlug, filter.ViewerID, filter.ViewerID).Scan(&poolID)
 		if err != nil {
 			return PostPage{}, err
 		}
@@ -272,9 +272,10 @@ func (s *Store) Post(ctx context.Context, id int64) (Post, error) {
 }
 
 func (s *Store) PostForUser(ctx context.Context, id, viewerID int64, canModerate bool) (Post, error) {
+	_ = canModerate
 	var p Post
 	var uploader sql.NullInt64
-	err := s.DB.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND (p.status='published' OR p.uploader_id=? OR ?)`, id, viewerID, canModerate).Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &uploader, &p.Uploader)
+	err := s.DB.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND (p.status='published' OR (p.uploader_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)) OR EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL AND v.role IN ('moderator','admin')))`, id, viewerID, viewerID, viewerID).Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &uploader, &p.Uploader)
 	if err != nil {
 		return p, err
 	}
@@ -282,7 +283,7 @@ func (s *Store) PostForUser(ctx context.Context, id, viewerID int64, canModerate
 		p.UploaderID = uploader.Int64
 	}
 	if viewerID != 0 {
-		_ = s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM favorites WHERE post_id=? AND user_id=?)`, id, viewerID).Scan(&p.Favorite)
+		_ = s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM favorites f JOIN users v ON v.id=f.user_id WHERE f.post_id=? AND f.user_id=? AND v.suspended_at IS NULL)`, id, viewerID).Scan(&p.Favorite)
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category FROM tags t JOIN post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=? ORDER BY t.category,t.name`, id)
 	if err != nil {
@@ -308,8 +309,9 @@ func (s *Store) MediaVisibleToUser(ctx context.Context, kind, path string, viewe
 	default:
 		return false, errors.New("invalid media kind")
 	}
+	_ = canModerate
 	var visible int
-	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts p WHERE p.`+column+`=? AND p.deleted_at IS NULL AND (p.status='published' OR p.uploader_id=? OR ?))`, path, viewerID, canModerate).Scan(&visible)
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts p WHERE p.`+column+`=? AND p.deleted_at IS NULL AND (p.status='published' OR (p.uploader_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)) OR EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL AND v.role IN ('moderator','admin'))))`, path, viewerID, viewerID, viewerID).Scan(&visible)
 	return visible != 0, err
 }
 
@@ -333,7 +335,7 @@ func (s *Store) Pools(ctx context.Context) ([]Pool, error) {
 	return s.PoolsForUser(ctx, 0)
 }
 func (s *Store) PoolsForUser(ctx context.Context, viewerID int64) ([]Pool, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,COALESCE(po.owner_id,0),COALESCE(u.username,''),count(CASE WHEN p.status='published' AND p.deleted_at IS NULL THEN 1 END) FROM pools po LEFT JOIN users u ON u.id=po.owner_id LEFT JOIN pool_posts pp ON pp.pool_id=po.id LEFT JOIN posts p ON p.id=pp.post_id WHERE po.status='published' OR po.owner_id=? GROUP BY po.id ORDER BY po.status,po.name`, viewerID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT po.id,po.slug,po.name,po.description,po.status,COALESCE(po.owner_id,0),COALESCE(u.username,''),count(CASE WHEN p.status='published' AND p.deleted_at IS NULL THEN 1 END) FROM pools po LEFT JOIN users u ON u.id=po.owner_id LEFT JOIN pool_posts pp ON pp.pool_id=po.id LEFT JOIN posts p ON p.id=pp.post_id WHERE po.status='published' OR (po.owner_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)) GROUP BY po.id ORDER BY po.status,po.name`, viewerID, viewerID)
 	if err != nil {
 		return nil, err
 	}

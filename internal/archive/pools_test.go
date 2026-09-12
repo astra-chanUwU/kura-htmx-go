@@ -22,17 +22,17 @@ func TestPoolMembershipRequiresOwnershipAndPreservesViewerOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, second, third := posts.Posts[2].ID, posts.Posts[1].ID, posts.Posts[0].ID
-	pool, err := s.CreatePool(ctx, owner.ID, "Visual Set", "", "draft", "")
+	pool, err := s.CreatePool(ctx, owner, "Visual Set", "", "draft", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.AddPostToPool(ctx, other.ID, pool.Slug, first); !errors.Is(err, ErrPermission) {
+	if err = s.AddPostToPool(ctx, other, pool.Slug, first); !errors.Is(err, ErrPermission) {
 		t.Fatalf("another viewer added to the pool: %v", err)
 	}
-	if err = s.AddPostToPool(ctx, owner.ID, pool.Slug, first); err != nil {
+	if err = s.AddPostToPool(ctx, owner, pool.Slug, first); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.UpdatePool(ctx, owner.ID, pool.Slug, pool.Name, pool.Description, pool.Status, fmt.Sprintf("%d %d %d", third, first, second)); err != nil {
+	if err = s.UpdatePool(ctx, owner, pool.Slug, pool.Name, pool.Description, pool.Status, fmt.Sprintf("%d %d %d", third, first, second)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestPoolCandidatesScopeFavoritesAndPoolVisibility(t *testing.T) {
 		t.Fatalf("favorites were not scoped to the viewer: %+v err=%v", favorites, err)
 	}
 
-	published, err := s.CreatePool(ctx, other.ID, "Published source", "", "published", fmt.Sprintf("%d", viewerFavorite))
+	published, err := s.CreatePool(ctx, other, "Published source", "", "published", fmt.Sprintf("%d", viewerFavorite))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPoolCandidatesScopeFavoritesAndPoolVisibility(t *testing.T) {
 		t.Fatalf("published pool was not available: %+v err=%v", visible, err)
 	}
 
-	ownDraft, err := s.CreatePool(ctx, viewer.ID, "Own draft source", "", "draft", fmt.Sprintf("%d", viewerFavorite))
+	ownDraft, err := s.CreatePool(ctx, viewer, "Own draft source", "", "draft", fmt.Sprintf("%d", viewerFavorite))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestPoolCandidatesScopeFavoritesAndPoolVisibility(t *testing.T) {
 		t.Fatalf("own draft pool was not available: %+v err=%v", owned, err)
 	}
 
-	otherDraft, err := s.CreatePool(ctx, other.ID, "Other draft source", "", "draft", fmt.Sprintf("%d", viewerFavorite))
+	otherDraft, err := s.CreatePool(ctx, other, "Other draft source", "", "draft", fmt.Sprintf("%d", viewerFavorite))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestPoolCandidatesSearchesWithinSelectedSourceInOrder(t *testing.T) {
 	addPost(t, s, "second", "published", "red")
 	addPost(t, s, "third", "published", "blue")
 	posts, _ := s.ListPosts(ctx, "", 1, 24)
-	pool, err := s.CreatePool(ctx, viewer.ID, "Ordered source", "", "published", fmt.Sprintf("%d %d %d", posts.Posts[0].ID, posts.Posts[1].ID, posts.Posts[2].ID))
+	pool, err := s.CreatePool(ctx, viewer, "Ordered source", "", "published", fmt.Sprintf("%d %d %d", posts.Posts[0].ID, posts.Posts[1].ID, posts.Posts[2].ID))
 	if err != nil {
 		t.Fatal(err)
 	}

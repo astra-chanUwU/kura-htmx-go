@@ -29,7 +29,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	post, err := s.media.Ingest(r.Context(), file, header, user.ID, r.FormValue("source"), r.FormValue("tags"), r.FormValue("status"))
+	post, err := s.media.Ingest(r.Context(), file, header, *user, r.FormValue("source"), r.FormValue("tags"), r.FormValue("status"))
 	if err != nil {
 		s.render(w, r, "upload", viewData{Title: "Upload — Kura", ActiveNav: "upload", Error: err.Error()})
 		return

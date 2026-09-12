@@ -123,7 +123,7 @@ func TestPasskeyLoginCreatesOrdinaryKuraSession(t *testing.T) {
 	ctx := context.Background()
 	user, _ := store.Register(ctx, "passkey-login", "password login backup")
 	credential := webauthn.Credential{ID: []byte("login-credential"), PublicKey: []byte("public-key")}
-	if _, err := store.AddPasskey(ctx, user.ID, "Test passkey", credential); err != nil {
+	if _, err := store.AddPasskey(ctx, user, "Test passkey", credential); err != nil {
 		t.Fatal(err)
 	}
 	authUser, _ := store.WebAuthnUser(ctx, user.ID)
@@ -173,14 +173,17 @@ func TestPasswordRemovalRequiresFreshPasskeyAndRecovery(t *testing.T) {
 	ctx := context.Background()
 	user, _ := store.Register(ctx, "remove-password", "password to remove")
 	credential := webauthn.Credential{ID: []byte("remove-credential"), PublicKey: []byte("public-key")}
-	key, _ := store.AddPasskey(ctx, user.ID, "MacBook", credential)
+	key, _ := store.AddPasskey(ctx, user, "MacBook", credential)
 	if key.ID == 0 {
 		t.Fatal("test passkey was not stored")
 	}
-	_, _ = store.ReplaceRecoveryCode(ctx, user.ID)
+	_, _ = store.ReplaceRecoveryCode(ctx, user)
 	authUser, _ := store.WebAuthnUser(ctx, user.ID)
 	server.passkeys = &fakePasskeys{user: authUser, credential: credential}
 	session, _ := store.NewSession(ctx, &user.ID)
+	if err := store.RemovePassword(ctx, user, session.Token, "remove"); !errors.Is(err, archive.ErrFreshPasskey) {
+		t.Fatalf("archive command did not enforce fresh passkey: %v", err)
+	}
 
 	denied := sessionRequest(t, server.Handler(), "POST", "/account/password/remove", url.Values{"confirmation": {"remove"}}, session)
 	if denied.Code != http.StatusForbidden {
@@ -267,7 +270,7 @@ func TestRecoveryReplacesCodeRevokesSessionsAndSignsUserIn(t *testing.T) {
 	ctx := context.Background()
 	user, _ := store.Register(ctx, "web-recovery", "original web password")
 	oldSession, _ := store.NewSession(ctx, &user.ID)
-	code, _ := store.ReplaceRecoveryCode(ctx, user.ID)
+	code, _ := store.ReplaceRecoveryCode(ctx, user)
 	handler := server.Handler()
 	get := httptest.NewRecorder()
 	handler.ServeHTTP(get, httptest.NewRequest("GET", "/recover", nil))
@@ -331,8 +334,8 @@ func TestAuthenticationAndAccountSecurityUIExposePasskeyFirstFlows(t *testing.T)
 	}
 
 	user, _ := store.Register(context.Background(), "security-ui", "security ui password")
-	_, _ = store.AddPasskey(context.Background(), user.ID, "Bitwarden", webauthn.Credential{ID: []byte("ui-key"), PublicKey: []byte("public-key")})
-	_, _ = store.ReplaceRecoveryCode(context.Background(), user.ID)
+	_, _ = store.AddPasskey(context.Background(), user, "Bitwarden", webauthn.Credential{ID: []byte("ui-key"), PublicKey: []byte("public-key")})
+	_, _ = store.ReplaceRecoveryCode(context.Background(), user)
 	session, _ := store.NewSession(context.Background(), &user.ID)
 	account := sessionRequest(t, handler, "GET", "/account", nil, session)
 	body := account.Body.String()
@@ -433,8 +436,8 @@ func TestPasskeyRemovalHasHTMXFragmentAndRedirectFallback(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()
 	user, _ := store.Register(ctx, "remove-keys", "password remains here")
-	first, _ := store.AddPasskey(ctx, user.ID, "First", webauthn.Credential{ID: []byte("first-key"), PublicKey: []byte("public-one")})
-	second, _ := store.AddPasskey(ctx, user.ID, "Second", webauthn.Credential{ID: []byte("second-key"), PublicKey: []byte("public-two")})
+	first, _ := store.AddPasskey(ctx, user, "First", webauthn.Credential{ID: []byte("first-key"), PublicKey: []byte("public-one")})
+	second, _ := store.AddPasskey(ctx, user, "Second", webauthn.Credential{ID: []byte("second-key"), PublicKey: []byte("public-two")})
 	session, _ := store.NewSession(ctx, &user.ID)
 
 	values := url.Values{"csrf": {session.CSRF}}
@@ -539,7 +542,7 @@ func TestRecoveryCanEstablishPasskeyAndNewSession(t *testing.T) {
 	ctx := context.Background()
 	user, _ := store.Register(ctx, "recover-passkey", "original recovery password")
 	oldSession, _ := store.NewSession(ctx, &user.ID)
-	code, _ := store.ReplaceRecoveryCode(ctx, user.ID)
+	code, _ := store.ReplaceRecoveryCode(ctx, user)
 	credential := webauthn.Credential{ID: []byte("recovery-passkey"), PublicKey: []byte("recovery-public")}
 	server.passkeys = &fakePasskeys{credential: credential}
 	handler := server.Handler()
@@ -834,7 +837,7 @@ func TestViewerAddsPostToOwnedPoolFromPostPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	postID, _ := result.LastInsertId()
-	pool, err := store.CreatePool(ctx, viewer.ID, "My Visual Pool", "", "draft", "")
+	pool, err := store.CreatePool(ctx, viewer, "My Visual Pool", "", "draft", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -920,13 +923,13 @@ func TestFavoritesPageRendersAndRemovesOnlySelectedPost(t *testing.T) {
 	first := insertPublishedPost(t, store, "favorites-first")
 	second := insertPublishedPost(t, store, "favorites-second")
 	third := insertPublishedPost(t, store, "favorites-other")
-	if err := store.SetFavorite(ctx, viewer.ID, first, true); err != nil {
+	if err := store.SetFavorite(ctx, viewer, first, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetFavorite(ctx, viewer.ID, second, true); err != nil {
+	if err := store.SetFavorite(ctx, viewer, second, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetFavorite(ctx, other.ID, third, true); err != nil {
+	if err := store.SetFavorite(ctx, other, third, true); err != nil {
 		t.Fatal(err)
 	}
 	session, _ := store.NewSession(ctx, &viewer.ID)
@@ -992,10 +995,12 @@ func TestServeMediaRequiresVisiblePost(t *testing.T) {
 	if err = store.SetUserRole(ctx, admin, moderator.ID, "moderator"); err != nil {
 		t.Fatal(err)
 	}
-	post, err := store.CreatePost(ctx, archive.NewPost{
-		UploaderID: owner.ID, Status: "draft", OriginalPath: "originals/2026/09/media.png", ThumbnailPath: "thumbs/2026/09/media.jpg",
-		MIMEType: "image/png", Width: 1, Height: 1, ByteSize: 16, SHA256: "media-visibility",
-	})
+	result, err := store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,uploader_id) VALUES('draft','originals/2026/09/media.png','thumbs/2026/09/media.jpg','image/png',1,1,16,'media-visibility',?)`, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postID, _ := result.LastInsertId()
+	post, err := store.PostForUser(ctx, postID, owner.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1043,7 +1048,7 @@ func TestServeMediaRequiresVisiblePost(t *testing.T) {
 		}
 	}
 
-	if err = store.UpdatePost(ctx, post.ID, "", "", "published"); err != nil {
+	if err = store.UpdatePost(ctx, moderator, post.ID, "", "", "published"); err != nil {
 		t.Fatal(err)
 	}
 	published := mediaRequest(t, handler, "GET", "/media/originals/2026/09/media.png", nil, nil)
@@ -1062,13 +1067,13 @@ func TestServeMediaRequiresVisiblePost(t *testing.T) {
 		t.Fatalf("range media request status=%d body=%q", ranged.Code, ranged.Body.String())
 	}
 
-	if err = store.UpdatePost(ctx, post.ID, "", "", "draft"); err != nil {
+	if err = store.UpdatePost(ctx, moderator, post.ID, "", "", "draft"); err != nil {
 		t.Fatal(err)
 	}
 	if response := mediaRequest(t, handler, "GET", "/media/originals/2026/09/media.png", nil, nil); response.Code != http.StatusNotFound {
 		t.Fatalf("unpublished media remained public: status=%d body=%s", response.Code, response.Body.String())
 	}
-	if err = store.SoftDeletePost(ctx, post.ID); err != nil {
+	if err = store.SoftDeletePost(ctx, admin, post.ID); err != nil {
 		t.Fatal(err)
 	}
 	ownerSession, err := store.NewSession(ctx, &owner.ID)

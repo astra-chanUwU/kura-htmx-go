@@ -67,7 +67,7 @@ func TestRecoveryCodeIsHashedOneUseAndRevokesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldSession, _ := s.NewSession(ctx, &user.ID)
-	code, err := s.ReplaceRecoveryCode(ctx, user.ID)
+	code, err := s.ReplaceRecoveryCode(ctx, user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRecoveryCanAddPasskeyRotateCodeAndRevokeSessions(t *testing.T) {
 	ctx := context.Background()
 	user, _ := s.Register(ctx, "recover-key", "original key password")
 	oldSession, _ := s.NewSession(ctx, &user.ID)
-	code, _ := s.ReplaceRecoveryCode(ctx, user.ID)
+	code, _ := s.ReplaceRecoveryCode(ctx, user)
 	authUser, grant, err := s.VerifyRecoveryCode(ctx, "RECOVER-KEY", code)
 	if err != nil || authUser.ID != user.ID || grant == "" {
 		t.Fatalf("recovery verification failed: user=%+v grant=%q err=%v", authUser, grant, err)
@@ -127,13 +127,16 @@ func TestPasskeyStorageAndLastAuthenticatorProtection(t *testing.T) {
 	keep, _ := s.NewSession(ctx, &user.ID)
 	other, _ := s.NewSession(ctx, &user.ID)
 	credential := webauthn.Credential{ID: []byte("credential-one"), PublicKey: []byte("public-key")}
-	if _, err := s.AddPasskey(ctx, user.ID, "MacBook Touch ID", credential); err != nil {
+	if _, err := s.AddPasskey(ctx, user, "MacBook Touch ID", credential); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReplaceRecoveryCode(ctx, user.ID); err != nil {
+	if _, err := s.ReplaceRecoveryCode(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RemovePassword(ctx, user.ID, keep.Token); err != nil {
+	if err := s.MarkSessionPasskeyVerified(ctx, keep.Token, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemovePassword(ctx, user, keep.Token, "remove"); err != nil {
 		t.Fatal(err)
 	}
 	status, err := s.SecurityStatus(ctx, user.ID)
@@ -146,14 +149,14 @@ func TestPasskeyStorageAndLastAuthenticatorProtection(t *testing.T) {
 	if _, err = s.Session(ctx, other.Token); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("other session survived password removal: %v", err)
 	}
-	if err = s.RemovePasskey(ctx, user.ID, status.Passkeys[0].ID); !errors.Is(err, ErrLastAuthenticator) {
+	if err = s.RemovePasskey(ctx, user, status.Passkeys[0].ID); !errors.Is(err, ErrLastAuthenticator) {
 		t.Fatalf("last passkey removal was allowed: %v", err)
 	}
-	second, err := s.AddPasskey(ctx, user.ID, "Security key", webauthn.Credential{ID: []byte("credential-two"), PublicKey: []byte("public-key-two")})
+	second, err := s.AddPasskey(ctx, user, "Security key", webauthn.Credential{ID: []byte("credential-two"), PublicKey: []byte("public-key-two")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.RemovePasskey(ctx, user.ID, second.ID); err != nil {
+	if err = s.RemovePasskey(ctx, user, second.ID); err != nil {
 		t.Fatalf("second passkey could not be removed: %v", err)
 	}
 }
@@ -427,10 +430,10 @@ func TestFavoritesAndDraftPoolsArePrivate(t *testing.T) {
 	addPost(t, s, "public", "published")
 	var postID int64
 	_ = s.DB.QueryRow(`SELECT id FROM posts WHERE sha256='public'`).Scan(&postID)
-	if err := s.SetFavorite(ctx, a.ID, postID, true); err != nil {
+	if err := s.SetFavorite(ctx, a, postID, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetFavorite(ctx, b.ID, postID, true); err != nil {
+	if err := s.SetFavorite(ctx, b, postID, true); err != nil {
 		t.Fatalf("second viewer could not favorite the same post: %v", err)
 	}
 	aFavorites, _ := s.Favorites(ctx, a.ID)
@@ -438,7 +441,7 @@ func TestFavoritesAndDraftPoolsArePrivate(t *testing.T) {
 	if len(aFavorites) != 1 || len(bFavorites) != 1 {
 		t.Fatalf("favorites leaked: alice=%d bobby=%d", len(aFavorites), len(bFavorites))
 	}
-	pool, err := s.CreatePool(ctx, a.ID, "Secret Set", "draft", "draft", "")
+	pool, err := s.CreatePool(ctx, a, "Secret Set", "draft", "draft", "")
 	if err != nil {
 		t.Fatal(err)
 	}

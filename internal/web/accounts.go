@@ -37,16 +37,12 @@ func (s *Server) removePassword(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	if r.FormValue("confirmation") != "remove" {
-		http.Error(w, "confirmation required", http.StatusBadRequest)
-		return
-	}
 	fresh, err := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
 	if err != nil || !fresh {
 		http.Error(w, "fresh passkey verification required", http.StatusForbidden)
 		return
 	}
-	if err = s.store.RemovePassword(r.Context(), user.ID, currentSession(r).Token); err != nil {
+	if err = s.store.RemovePassword(r.Context(), *user, currentSession(r).Token, r.FormValue("confirmation")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -63,7 +59,7 @@ func (s *Server) replaceRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fresh passkey verification required", http.StatusForbidden)
 		return
 	}
-	code, err := s.store.ReplaceRecoveryCode(r.Context(), user.ID)
+	code, err := s.store.ReplaceRecoveryCode(r.Context(), *user)
 	if err != nil {
 		http.Error(w, "recovery code unavailable", http.StatusInternalServerError)
 		return
@@ -76,7 +72,7 @@ func (s *Server) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	if err := s.store.RevokeOtherSessions(r.Context(), user.ID, currentSession(r).Token); err != nil {
+	if err := s.store.RevokeOtherSessions(r.Context(), *user, currentSession(r).Token); err != nil {
 		http.Error(w, "sessions could not be revoked", http.StatusInternalServerError)
 		return
 	}
@@ -105,11 +101,11 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err = s.store.SetPassword(r.Context(), user.ID, r.FormValue("password")); err != nil {
+	if err = s.store.SetPassword(r.Context(), *user, r.FormValue("password")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err = s.store.RevokeOtherSessions(r.Context(), user.ID, currentSession(r).Token); err != nil {
+	if err = s.store.RevokeOtherSessions(r.Context(), *user, currentSession(r).Token); err != nil {
 		http.Error(w, "sessions could not be revoked", http.StatusInternalServerError)
 		return
 	}

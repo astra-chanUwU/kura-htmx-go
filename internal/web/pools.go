@@ -58,7 +58,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	pool, err := s.store.CreatePool(r.Context(), user.ID, r.FormValue("name"), r.FormValue("description"), r.FormValue("status"), r.FormValue("post_ids"))
+	pool, err := s.store.CreatePool(r.Context(), *user, r.FormValue("name"), r.FormValue("description"), r.FormValue("status"), r.FormValue("post_ids"))
 	if err != nil {
 		data, loadErr := s.poolEditorData(r, archive.Pool{Name: r.FormValue("name"), Description: r.FormValue("description"), Status: r.FormValue("status")}, r.FormValue("post_ids"))
 		if loadErr != nil {
@@ -96,7 +96,7 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	err := s.store.UpdatePool(r.Context(), user.ID, r.PathValue("slug"), r.FormValue("name"), r.FormValue("description"), r.FormValue("status"), r.FormValue("post_ids"))
+	err := s.store.UpdatePool(r.Context(), *user, r.PathValue("slug"), r.FormValue("name"), r.FormValue("description"), r.FormValue("status"), r.FormValue("post_ids"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -163,7 +163,7 @@ func (s *Server) addPostToPool(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := postID(r)
 	if err == nil {
-		err = s.store.AddPostToPool(r.Context(), user.ID, r.FormValue("pool"), id)
+		err = s.store.AddPostToPool(r.Context(), *user, r.FormValue("pool"), id)
 	}
 	if err != nil {
 		status := http.StatusBadRequest
