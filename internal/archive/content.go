@@ -15,12 +15,12 @@ import (
 var slugCleanup = regexp.MustCompile(`[^a-z0-9]+`)
 
 type NewPost struct {
-	UploaderID                          int64
-	Status, OriginalPath, ThumbnailPath string
-	MIMEType, SHA256, Source            string
-	Width, Height                       int
-	ByteSize                            int64
-	Tags                                []string
+	UploaderID                                            int64
+	Status, OriginalPath, ThumbnailPath, OriginalFilename string
+	MIMEType, SHA256, Source                              string
+	Width, Height                                         int
+	ByteSize                                              int64
+	Tags                                                  []string
 }
 
 func normalizeTags(raw []string) []string {
@@ -64,7 +64,7 @@ func (s *Store) CreatePost(ctx context.Context, actor User, input NewPost) (Post
 	if input.Status == "published" {
 		published = time.Now().UTC().Format(time.RFC3339)
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source,published_at,uploader_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, input.Status, input.OriginalPath, input.ThumbnailPath, input.MIMEType, input.Width, input.Height, input.ByteSize, input.SHA256, strings.TrimSpace(input.Source), published, current.ID)
+	result, err := tx.ExecContext(ctx, `INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source,published_at,uploader_id,original_filename) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, input.Status, input.OriginalPath, input.ThumbnailPath, input.MIMEType, input.Width, input.Height, input.ByteSize, input.SHA256, strings.TrimSpace(input.Source), published, current.ID, input.OriginalFilename)
 	if err != nil {
 		return Post{}, err
 	}

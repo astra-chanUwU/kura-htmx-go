@@ -1,0 +1,1 @@
+ALTER TABLE posts ADD COLUMN original_filename TEXT NOT NULL DEFAULT '';

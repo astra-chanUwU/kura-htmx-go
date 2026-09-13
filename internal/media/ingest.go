@@ -16,9 +16,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"kura/internal/archive"
 )
@@ -138,6 +140,7 @@ func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multi
 	post, err := i.Store.CreatePost(ctx, current, archive.NewPost{
 		Status: status, OriginalPath: filepath.ToSlash(originalRel), ThumbnailPath: filepath.ToSlash(thumbRel),
 		MIMEType: mimeType, Width: bounds.Dx(), Height: bounds.Dy(), ByteSize: written, SHA256: hash, Source: source, Tags: strings.Fields(tags),
+		OriginalFilename: uploadBasename(header),
 	})
 	if err != nil {
 		// Hash-named files are intentionally retained if metadata insertion fails;
@@ -146,6 +149,26 @@ func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multi
 	}
 	_ = header
 	return post, nil
+}
+
+func uploadBasename(header *multipart.FileHeader) string {
+	if header == nil || header.Filename == "" {
+		return ""
+	}
+	name := path.Base(strings.ReplaceAll(header.Filename, "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if r == 0 || unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	if name == "." || name == ".." {
+		return ""
+	}
+	if runes := []rune(name); len(runes) > 255 {
+		name = string(runes[:255])
+	}
+	return name
 }
 
 func moveNoReplace(source, destination string) error {

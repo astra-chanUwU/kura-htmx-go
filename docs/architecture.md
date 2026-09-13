@@ -14,7 +14,7 @@ There is no background service in v1. Upload work can extract metadata and creat
 - `recovery_codes`: one active high-entropy code hash per account. Plaintext is returned only when generated.
 - `auth_challenges`: hashed opaque ceremony handles with server-owned WebAuthn session data, purpose, ownership, and short expiry; consuming a challenge deletes it.
 - `bootstrap_tokens`: the hash and expiry of the explicitly requested one-use initial enrollment link.
-- `posts`: lifecycle (`draft` or `published`), permanent uploader attribution, logical deletion, original and thumbnail paths, MIME, dimensions, byte size, SHA-256, source, timestamps.
+- `posts`: lifecycle (`draft` or `published`), permanent uploader attribution, logical deletion, original upload basename, original and thumbnail paths, MIME, dimensions, byte size, SHA-256, source, timestamps.
 - `tags`: unique normalized name, display name, and fixed category (`artist`, `character`, `copyright`, `general`, `meta`).
 - `post_tags`: many-to-many post/tag assignment with assignment time.
 - `pools`: owner, draft/published visibility, stable slug, name, and description.
@@ -26,7 +26,7 @@ SQLite foreign keys are enabled. Hashes are unique. Tag names and pool slugs are
 
 ## Filesystem contract
 
-The database stores paths relative to the media root, never arbitrary absolute paths. Real uploads use `originals/YYYY/MM/<sha256>.<ext>` and `thumbs/YYYY/MM/<sha256>.jpg`; demo data uses `demo/` beneath those roots. Ingestion streams to a private temporary directory, validates byte size, MIME and decoded dimensions, creates the thumbnail, and atomically renames both files into place. The media routes resolve only paths referenced by a non-deleted post visible to the current requester, and use non-storing cache headers so publication and authorization checks run again for later requests. Database deletion is logical and never silently deletes media; filesystem reconciliation remains an explicit maintenance operation.
+The database stores paths relative to the media root, never arbitrary absolute paths. Real uploads use `originals/YYYY/MM/<sha256>.<ext>` and `thumbs/YYYY/MM/<sha256>.jpg`; demo data uses `demo/` beneath those roots. Ingestion streams to a private temporary directory, validates byte size, MIME and decoded dimensions, retains only the submitted basename, creates the thumbnail, and atomically renames both files into place. The media routes and individual download route resolve only paths referenced by a non-deleted post visible to the current requester, and use non-storing cache headers so publication and authorization checks run again for later requests. Downloads generate bounded names at response time, prefix them with the post ID for collision resistance, and preserve the original bytes and MIME-correct extension. Database deletion is logical and never silently deletes media; filesystem reconciliation remains an explicit maintenance operation.
 
 Account suspension deletes that account's active sessions but does not delete the account row. Upload ownership uses a restrictive foreign key, so an uploader account cannot be removed and silently orphan its permanent attribution. Legacy/demo posts may have no owner; every real upload records one.
 

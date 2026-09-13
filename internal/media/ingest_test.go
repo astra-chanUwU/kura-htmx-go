@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"mime/multipart"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,12 +65,19 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ingestor := Ingestor{Root: filepath.Join(root, "media"), Store: store}
-	post, err := ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), nil, user, "", "blue sample", "published")
+	post, err := ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), &multipart.FileHeader{Filename: "/private/camera/yuri-camera-room-dorm.jpeg"}, user, "", "blue sample", "published")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.IsAbs(post.OriginalPath) || !strings.HasPrefix(post.OriginalPath, "originals/") || !strings.Contains(post.OriginalPath, post.SHA256) {
 		t.Fatalf("unsafe or non-hash original path: %q", post.OriginalPath)
+	}
+	var originalFilename string
+	if err = store.DB.QueryRow(`SELECT original_filename FROM posts WHERE id=?`, post.ID).Scan(&originalFilename); err != nil {
+		t.Fatal(err)
+	}
+	if originalFilename != "yuri-camera-room-dorm.jpeg" {
+		t.Fatalf("original filename=%q, want basename only", originalFilename)
 	}
 	for _, rel := range []string{post.OriginalPath, post.ThumbnailPath} {
 		if info, statErr := os.Stat(filepath.Join(ingestor.Root, filepath.FromSlash(rel))); statErr != nil || info.Size() == 0 {

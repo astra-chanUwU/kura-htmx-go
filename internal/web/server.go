@@ -158,6 +158,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /posts", s.posts)
 	mux.HandleFunc("GET /posts/grid", s.grid)
 	mux.HandleFunc("GET /posts/{id}", s.post)
+	mux.HandleFunc("GET /posts/{id}/download", s.download)
 	mux.HandleFunc("POST /posts/{id}/favorite", s.favorite)
 	mux.HandleFunc("GET /favorites", s.favorites)
 	mux.HandleFunc("POST /favorites/{id}/remove", s.removeFavorite)

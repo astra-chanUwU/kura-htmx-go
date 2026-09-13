@@ -18,15 +18,15 @@ var migrations embed.FS
 type Store struct{ DB *sql.DB }
 
 type Post struct {
-	ID                                            int64
-	Status, OriginalPath, ThumbnailPath, MIMEType string
-	Width, Height                                 int
-	ByteSize                                      int64
-	SHA256, Source, PublishedAt                   string
-	UploaderID                                    int64
-	Uploader                                      string
-	Favorite                                      bool
-	Tags                                          []Tag
+	ID                                                              int64
+	Status, OriginalPath, ThumbnailPath, MIMEType, OriginalFilename string
+	Width, Height                                                   int
+	ByteSize                                                        int64
+	SHA256, Source, PublishedAt                                     string
+	UploaderID                                                      int64
+	Uploader                                                        string
+	Favorite                                                        bool
+	Tags                                                            []Tag
 }
 
 type Tag struct {
@@ -275,7 +275,7 @@ func (s *Store) PostForUser(ctx context.Context, id, viewerID int64, canModerate
 	_ = canModerate
 	var p Post
 	var uploader sql.NullInt64
-	err := s.DB.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND (p.status='published' OR (p.uploader_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)) OR EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL AND v.role IN ('moderator','admin')))`, id, viewerID, viewerID, viewerID).Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &uploader, &p.Uploader)
+	err := s.DB.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.original_filename,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND (p.status='published' OR (p.uploader_id=? AND EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL)) OR EXISTS(SELECT 1 FROM users v WHERE v.id=? AND v.suspended_at IS NULL AND v.role IN ('moderator','admin')))`, id, viewerID, viewerID, viewerID).Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.OriginalFilename, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &uploader, &p.Uploader)
 	if err != nil {
 		return p, err
 	}
