@@ -98,7 +98,11 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 func tagsString(tags []archive.Tag) string {
 	values := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		values = append(values, tag.Name)
+		if tag.Category == "general" {
+			values = append(values, tag.Name)
+			continue
+		}
+		values = append(values, tag.Category+":"+tag.Name)
 	}
 	return strings.Join(values, " ")
 }

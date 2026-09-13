@@ -804,7 +804,7 @@ func TestPostQuickEditIsLimitedToEditorsAndSavesInline(t *testing.T) {
 		t.Fatalf("editor page lacks quick edit under the image: status=%d body=%s", editorPage.Code, editorPage.Body.String())
 	}
 
-	values := url.Values{"tags": {"updated_quick_tag"}, "source": {"https://example.test/source"}, "status": {"published"}, "csrf": {rootSession.CSRF}}
+	values := url.Values{"tags": {"artist:updated_quick_tag"}, "source": {"https://example.test/source"}, "status": {"published"}, "csrf": {rootSession.CSRF}}
 	request := httptest.NewRequest("POST", path+"/edit", strings.NewReader(values.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("HX-Request", "true")
@@ -815,7 +815,7 @@ func TestPostQuickEditIsLimitedToEditorsAndSavesInline(t *testing.T) {
 		t.Fatalf("quick edit response status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
 	updated, err := store.Post(ctx, postID)
-	if err != nil || len(updated.Tags) != 1 || updated.Tags[0].Name != "updated_quick_tag" || updated.Source != "https://example.test/source" {
+	if err != nil || len(updated.Tags) != 1 || updated.Tags[0].Name != "updated_quick_tag" || updated.Tags[0].Category != "artist" || updated.Source != "https://example.test/source" {
 		t.Fatalf("quick edit did not update post: %+v err=%v", updated, err)
 	}
 

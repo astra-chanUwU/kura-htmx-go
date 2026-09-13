@@ -65,7 +65,7 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ingestor := Ingestor{Root: filepath.Join(root, "media"), Store: store}
-	post, err := ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), &multipart.FileHeader{Filename: "/private/camera/yuri-camera-room-dorm.jpeg"}, user, "", "blue sample", "published")
+	post, err := ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), &multipart.FileHeader{Filename: "/private/camera/yuri-camera-room-dorm.jpeg"}, user, "", "artist:Sample_Artist blue", "published")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +78,10 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 	}
 	if originalFilename != "yuri-camera-room-dorm.jpeg" {
 		t.Fatalf("original filename=%q, want basename only", originalFilename)
+	}
+	stored, err := store.Post(context.Background(), post.ID)
+	if err != nil || len(stored.Tags) != 2 || stored.Tags[0].Category != "artist" {
+		t.Fatalf("categorized upload tags = %+v, err=%v", stored.Tags, err)
 	}
 	for _, rel := range []string{post.OriginalPath, post.ThumbnailPath} {
 		if info, statErr := os.Stat(filepath.Join(ingestor.Root, filepath.FromSlash(rel))); statErr != nil || info.Size() == 0 {

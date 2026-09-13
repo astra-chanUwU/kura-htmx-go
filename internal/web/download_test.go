@@ -18,11 +18,13 @@ func TestIndividualDownloadUsesTaggedNameAndPreservesOriginalBytes(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tag := range []string{"room", "black_hair"} {
-		if _, err = store.DB.Exec(`INSERT INTO tags(name,display_name,category) VALUES(?,?, 'general')`, tag, strings.ReplaceAll(tag, "_", " ")); err != nil {
+	for _, tag := range []struct {
+		name, category string
+	}{{"room", "general"}, {"black_hair", "artist"}} {
+		if _, err = store.DB.Exec(`INSERT INTO tags(name,display_name,category) VALUES(?,?,?)`, tag.name, strings.ReplaceAll(tag.name, "_", " "), tag.category); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = store.DB.Exec(`INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, postID, tag); err != nil {
+		if _, err = store.DB.Exec(`INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, postID, tag.name); err != nil {
 			t.Fatal(err)
 		}
 	}

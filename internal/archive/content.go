@@ -14,6 +14,13 @@ import (
 
 var slugCleanup = regexp.MustCompile(`[^a-z0-9]+`)
 
+var ErrTagCategoryConflict = errors.New("tag category conflict")
+
+type parsedTag struct {
+	Name, Category string
+	Explicit       bool
+}
+
 type NewPost struct {
 	UploaderID                                            int64
 	Status, OriginalPath, ThumbnailPath, OriginalFilename string
@@ -23,22 +30,98 @@ type NewPost struct {
 	Tags                                                  []string
 }
 
-func normalizeTags(raw []string) []string {
-	seen := map[string]bool{}
-	var tags []string
+func parseTagInput(raw []string) ([]parsedTag, error) {
+	byName := map[string]parsedTag{}
 	for _, part := range raw {
-		for _, tag := range strings.Fields(strings.ToLower(part)) {
-			tag = strings.Trim(tag, "#, ")
-			tag = slugCleanup.ReplaceAllString(tag, "_")
-			tag = strings.Trim(tag, "_")
-			if tag != "" && len(tag) <= 80 && !seen[tag] {
-				seen[tag] = true
-				tags = append(tags, tag)
+		for _, token := range strings.Fields(strings.ToLower(part)) {
+			category, nameToken, explicit := tagCategoryPrefix(token)
+			name := normalizeTagName(nameToken)
+			if name == "" {
+				if explicit {
+					return nil, fmt.Errorf("%s: category prefix needs a tag name", ErrTagCategoryConflict)
+				}
+				continue
 			}
+			if len(name) > 80 {
+				if explicit {
+					return nil, fmt.Errorf("%s: tag %q is longer than 80 characters", ErrTagCategoryConflict, name)
+				}
+				continue
+			}
+			candidate := parsedTag{Name: name, Category: category, Explicit: explicit}
+			previous, exists := byName[name]
+			if !exists {
+				byName[name] = candidate
+				continue
+			}
+			if previous.Explicit && candidate.Explicit && previous.Category != candidate.Category {
+				return nil, fmt.Errorf("%w: tag %q was given both %s and %s categories", ErrTagCategoryConflict, name, previous.Category, candidate.Category)
+			}
+			if candidate.Explicit {
+				previous.Category = candidate.Category
+				previous.Explicit = true
+			}
+			byName[name] = previous
 		}
 	}
-	sort.Strings(tags)
-	return tags
+	tags := make([]parsedTag, 0, len(byName))
+	for _, tag := range byName {
+		tags = append(tags, tag)
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
+	return tags, nil
+}
+
+func tagCategoryPrefix(token string) (category, name string, explicit bool) {
+	category = "general"
+	name = token
+	colon := strings.IndexByte(token, ':')
+	if colon < 1 {
+		return category, name, false
+	}
+	prefix := token[:colon]
+	switch prefix {
+	case "artist", "character", "copyright", "general", "meta":
+		return prefix, token[colon+1:], true
+	default:
+		return category, name, false
+	}
+}
+
+func normalizeTagName(tag string) string {
+	tag = strings.Trim(tag, "#, ")
+	tag = slugCleanup.ReplaceAllString(strings.ToLower(tag), "_")
+	return strings.Trim(tag, "_")
+}
+
+func tagCategoryConflict(name, existing string) error {
+	return fmt.Errorf("%w: tag %q is already categorized as %s; use %s:%s", ErrTagCategoryConflict, name, existing, existing, name)
+}
+
+func validateTagCategories(ctx context.Context, tx *sql.Tx, tags []parsedTag) error {
+	for _, tag := range tags {
+		var existing string
+		err := tx.QueryRowContext(ctx, `SELECT category FROM tags WHERE name=?`, tag.Name).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if tag.Explicit && existing != tag.Category {
+			return tagCategoryConflict(tag.Name, existing)
+		}
+	}
+	return nil
+}
+
+func ensureTags(ctx context.Context, tx *sql.Tx, tags []parsedTag) error {
+	for _, tag := range tags {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tags(name,display_name,category) VALUES(?,?,?) ON CONFLICT(name) DO NOTHING`, tag.Name, strings.ReplaceAll(tag.Name, "_", " "), tag.Category); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) PostIDByHash(ctx context.Context, hash string) (int64, error) {
@@ -51,6 +134,10 @@ func (s *Store) CreatePost(ctx context.Context, actor User, input NewPost) (Post
 	if input.Status != "draft" && input.Status != "published" {
 		return Post{}, errors.New("invalid post status")
 	}
+	tags, err := parseTagInput(input.Tags)
+	if err != nil {
+		return Post{}, err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Post{}, err
@@ -59,6 +146,9 @@ func (s *Store) CreatePost(ctx context.Context, actor User, input NewPost) (Post
 	current, err := s.actorTx(ctx, tx, actor)
 	if err != nil || !current.CanUpload() {
 		return Post{}, ErrPermission
+	}
+	if err = validateTagCategories(ctx, tx, tags); err != nil {
+		return Post{}, err
 	}
 	var published any
 	if input.Status == "published" {
@@ -69,11 +159,11 @@ func (s *Store) CreatePost(ctx context.Context, actor User, input NewPost) (Post
 		return Post{}, err
 	}
 	id, _ := result.LastInsertId()
-	for _, tag := range normalizeTags(input.Tags) {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO tags(name,display_name,category) VALUES(?,?,'general') ON CONFLICT(name) DO NOTHING`, tag, strings.ReplaceAll(tag, "_", " ")); err != nil {
-			return Post{}, err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, id, tag); err != nil {
+	if err = ensureTags(ctx, tx, tags); err != nil {
+		return Post{}, err
+	}
+	for _, tag := range tags {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, id, tag.Name); err != nil {
 			return Post{}, err
 		}
 	}
@@ -86,6 +176,10 @@ func (s *Store) CreatePost(ctx context.Context, actor User, input NewPost) (Post
 func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, tags, status string) error {
 	if status != "draft" && status != "published" {
 		return errors.New("invalid post status")
+	}
+	parsedTags, err := parseTagInput([]string{tags})
+	if err != nil {
+		return err
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -103,6 +197,9 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 	if exists == 0 {
 		return sql.ErrNoRows
 	}
+	if err = validateTagCategories(ctx, tx, parsedTags); err != nil {
+		return err
+	}
 	var published any
 	if status == "published" {
 		published = time.Now().UTC().Format(time.RFC3339)
@@ -113,11 +210,11 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 	if _, err = tx.ExecContext(ctx, `DELETE FROM post_tags WHERE post_id=?`, id); err != nil {
 		return err
 	}
-	for _, tag := range normalizeTags([]string{tags}) {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO tags(name,display_name,category) VALUES(?,?,'general') ON CONFLICT(name) DO NOTHING`, tag, strings.ReplaceAll(tag, "_", " ")); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, id, tag); err != nil {
+	if err = ensureTags(ctx, tx, parsedTags); err != nil {
+		return err
+	}
+	for _, tag := range parsedTags {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, id, tag.Name); err != nil {
 			return err
 		}
 	}

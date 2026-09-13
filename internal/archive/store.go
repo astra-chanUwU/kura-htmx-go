@@ -34,6 +34,9 @@ type Tag struct {
 	Name, DisplayName, Category string
 	Count                       int
 }
+
+const tagSuggestionLimit = 8
+
 type Pool struct {
 	ID                              int64
 	Slug, Name, Description, Status string
@@ -331,6 +334,63 @@ func (s *Store) Tags(ctx context.Context) ([]Tag, error) {
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) TagSuggestions(ctx context.Context, actor User, query string) ([]Tag, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanUpload() {
+		return nil, ErrPermission
+	}
+	needle, category := tagSuggestionNeedle(query)
+	if needle == "" {
+		return []Tag{}, nil
+	}
+	sqlQuery := `SELECT id,name,display_name,category FROM tags WHERE name LIKE ? ESCAPE '\'`
+	args := []any{escapeLike(needle) + "%"}
+	if category != "" {
+		sqlQuery += ` AND category=?`
+		args = append(args, category)
+	}
+	sqlQuery += ` ORDER BY CASE WHEN name=? THEN 0 ELSE 1 END,name LIMIT ?`
+	args = append(args, needle, tagSuggestionLimit)
+	rows, err := tx.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tag
+	for rows.Next() {
+		var tag Tag
+		if err = rows.Scan(&tag.ID, &tag.Name, &tag.DisplayName, &tag.Category); err != nil {
+			return nil, err
+		}
+		out = append(out, tag)
+	}
+	return out, rows.Err()
+}
+
+func tagSuggestionNeedle(query string) (string, string) {
+	fields := strings.Fields(strings.ToLower(query))
+	if len(fields) == 0 {
+		return "", ""
+	}
+	category, token, explicit := tagCategoryPrefix(fields[len(fields)-1])
+	token = strings.Trim(token, "#, ")
+	token = slugCleanup.ReplaceAllString(token, "_")
+	if !explicit {
+		category = ""
+	}
+	return strings.TrimLeft(token, "_"), category
+}
+
+func escapeLike(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
+}
+
 func (s *Store) Pools(ctx context.Context) ([]Pool, error) {
 	return s.PoolsForUser(ctx, 0)
 }

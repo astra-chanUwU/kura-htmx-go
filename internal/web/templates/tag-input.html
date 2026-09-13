@@ -1,0 +1,2 @@
+{{define "tag-autocomplete-input"}}<div class="tag-autocomplete"><input name="tags" value="{{.PostTags}}" placeholder="artist:sample_artist black_hair" autocomplete="off" aria-autocomplete="list" aria-controls="tag-suggestions" data-tag-autocomplete><div id="tag-suggestions" class="tag-suggestions" role="listbox" hidden></div></div>{{end}}
+{{define "tag-suggestions"}}{{range .Tags}}<button type="button" role="option" data-tag-name="{{.Name}}" data-tag-category="{{.Category}}"><span>{{.Name}}</span><small>{{.Category}}</small></button>{{end}}{{end}}

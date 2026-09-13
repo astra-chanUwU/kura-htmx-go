@@ -17,7 +17,7 @@
 - Moderate tags, sources, and draft/published state.
 - Enforce moderator upload ownership, admin deletion, and super-admin-only admin role changes.
 
-The implemented vertical slice covers browsing, identity, role boundaries, uploads, favorites, pool visibility, and account administration. Tag autocomplete and bulk tagging remain later usability work once the core paths have more day-to-day use.
+The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, and account administration. Bulk tagging remains out of scope.
 
 ## Explicit non-goals
 

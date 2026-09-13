@@ -18,7 +18,7 @@
       </label>
     </section>
     <div class="upload-fields" aria-label="Image details">
-      <label>Tags <small>space-separated; new tags use the general category</small><input name="tags" placeholder="character_name series_name"></label>
+      <label>Tags <small>space-separated; use artist:, character:, copyright:, or meta: for new categorized tags; plain new tags are general</small>{{template "tag-autocomplete-input" .}}</label>
       <label>Source<input type="url" name="source" placeholder="https://…"></label>
       <label>Status<select name="status"><option value="published" selected>Published — visible immediately</option><option value="draft">Draft — review first</option></select></label>
     </div>
