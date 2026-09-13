@@ -58,6 +58,9 @@ type viewData struct {
 	PostTags                                     string
 	PoolPostIDs                                  string
 	Selected                                     map[int64]bool
+	BulkPreview                                  archive.BulkTagPreview
+	BulkPostIDs, BulkAddTags, BulkRemoveTags     string
+	BulkSource                                   string
 }
 
 func New(store *archive.Store, mediaRoot string) (*Server, error) {
@@ -85,6 +88,12 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 		"listCategories": func() []string { return []string{"artist", "character", "copyright", "general", "meta"} },
 		"media":          func(p string) string { return "/media/" + strings.TrimLeft(p, "/") },
 		"queryEscape":    url.QueryEscape,
+		"tagLabel": func(tag archive.Tag) string {
+			if tag.Category == "general" {
+				return tag.Name
+			}
+			return tag.Category + ":" + tag.Name
+		},
 		"seq": func(n int) []int {
 			out := make([]int, n)
 			for i := range out {
@@ -157,6 +166,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /setup/passkey/finish", s.setupPasskeyFinish)
 	mux.HandleFunc("GET /posts", s.posts)
 	mux.HandleFunc("GET /posts/grid", s.grid)
+	mux.HandleFunc("POST /posts/bulk-tags/preview", s.previewBulkTags)
+	mux.HandleFunc("POST /posts/bulk-tags/apply", s.applyBulkTags)
 	mux.HandleFunc("GET /tags/suggest", s.tagSuggestions)
 	mux.HandleFunc("GET /posts/{id}", s.post)
 	mux.HandleFunc("GET /posts/{id}/download", s.download)

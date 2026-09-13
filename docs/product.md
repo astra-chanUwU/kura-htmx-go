@@ -14,10 +14,10 @@
 - Preview before publish; save drafts and publish deliberately.
 - Extract MIME type, dimensions, file size, and SHA-256; reject duplicates by hash.
 - Generate thumbnails on disk.
-- Moderate tags, sources, and draft/published state.
+- Moderate tags, sources, and draft/published state, including bounded bulk tag deltas with an explicit preview.
 - Enforce moderator upload ownership, admin deletion, and super-admin-only admin role changes.
 
-The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, and account administration. Bulk tagging remains out of scope.
+The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, and a 24-post editor-only bulk tag preview/apply flow. Selection is limited to the currently visible browse/search page; pool views are not part of this first slice.
 
 ## Explicit non-goals
 
@@ -35,6 +35,8 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `GET /` | Sparse home, primary search, navigation |
 | `GET /posts?q=tag+tag&page=1` | Published post grid and filters |
 | `GET /posts/grid?...` | HTMX grid/rail/pagination fragment |
+| `POST /posts/bulk-tags/preview` | Preview bounded add/remove tag deltas for selected posts |
+| `POST /posts/bulk-tags/apply` | Apply a freshly authorized bounded tag delta |
 | `GET /posts/{id}` | Post detail |
 | `GET /random` | Redirect to a random published post |
 | `GET /pools` | Pool index |

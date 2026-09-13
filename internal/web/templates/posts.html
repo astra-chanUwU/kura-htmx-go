@@ -1,3 +1,30 @@
-{{define "posts"}}{{template "head" .}}{{template "nav" .}}<main id="main"><div id="browse">{{template "browse-fragment" .}}</div></main>{{template "foot" .}}{{end}}
-{{define "browse-fragment"}}<div class="browse"><aside class="tagrail"><form class="searchbar" action="/posts"><label class="visually-hidden" for="q">Search tags</label><div class="search-controls"><input id="q" name="q" value="{{.Query}}" placeholder="search tags…"><button class="search-submit">Go</button></div></form><h2>Tags</h2>{{range $category := (listCategories)}}{{with index $.TagGroups $category}}<section class="{{$category}}"><h3>{{$category}}</h3>{{range .}}<a href="/posts?q={{queryEscape .Name}}" hx-get="/posts/grid?q={{queryEscape .Name}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape .Name}}"><span>{{.DisplayName}}</span><small>{{.Count}}</small></a>{{end}}</section>{{end}}{{end}}</aside><section class="results"><div class="result-head"><b>{{.Page.Total}} posts</b>{{if .Query}}<span>matching “{{.Query}}”</span>{{end}}</div>{{if .Page.Posts}}<div class="grid">{{range .Page.Posts}}<a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a>{{end}}</div>{{else}}<div class="empty"><b>No posts found.</b><p>Try fewer tags or <a href="/posts">browse all posts</a>.</p></div>{{end}}{{template "pagination" .}}</section></div>{{end}}
+{{define "posts"}}
+{{template "head" .}}{{template "nav" .}}
+<main id="main"><div id="browse">{{template "browse-fragment" .}}</div></main>
+{{template "foot" .}}
+{{end}}
+
+{{define "browse-fragment"}}
+<div class="browse">
+<aside class="tagrail">
+<form class="searchbar" action="/posts"><label class="visually-hidden" for="q">Search tags</label><div class="search-controls"><input id="q" name="q" value="{{.Query}}" placeholder="search tags…"><button class="search-submit">Go</button></div></form>
+<h2>Tags</h2>
+{{range $category := (listCategories)}}{{with index $.TagGroups $category}}<section class="{{$category}}"><h3>{{$category}}</h3>{{range .}}<a href="/posts?q={{queryEscape .Name}}" hx-get="/posts/grid?q={{queryEscape .Name}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape .Name}}"><span>{{.DisplayName}}</span><small>{{.Count}}</small></a>{{end}}</section>{{end}}{{end}}
+</aside>
+<section class="results">
+<div class="result-head"><b>{{.Page.Total}} posts</b>{{if .Query}}<span>matching “{{.Query}}”</span>{{end}}</div>
+{{if .User}}{{if .User.CanUpload}}{{template "bulk-tag-toolbar" .}}{{end}}{{end}}
+{{if .Page.Posts}}<div class="grid">{{range .Page.Posts}}{{if $.User}}{{if $.User.CanUpload}}<article class="bulk-card"><label class="bulk-check"><input type="checkbox" data-bulk-post="{{.ID}}" data-bulk-post-checkbox><span class="visually-hidden">Select post {{.ID}}</span></label><a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a></article>{{else}}<a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a>{{end}}{{else}}<a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a>{{end}}{{end}}</div>{{else}}<div class="empty"><b>No posts found.</b><p>Try fewer tags or <a href="/posts">browse all posts</a>.</p></div>{{end}}
+{{template "pagination" .}}
+</section>
+</div>
+{{end}}
+
+{{define "bulk-tag-toolbar"}}
+<section class="bulk-tag-toolbar" data-bulk-toolbar>
+<div class="bulk-selection-head"><b><span data-bulk-count>0</span> selected</b><small>24 posts maximum</small><button type="button" data-bulk-select-page>Select this page</button><button type="button" data-bulk-clear>Clear</button></div>
+<form method="post" action="/posts/bulk-tags/preview" class="bulk-tag-form" data-bulk-form><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="source" value="{{.BulkSource}}"><label>Add tags<div class="tag-autocomplete"><input name="add_tags" placeholder="artist:sample_artist black_hair" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-add-suggestions" data-tag-autocomplete><div id="bulk-add-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><label>Remove tags<div class="tag-autocomplete"><input name="remove_tags" placeholder="tags to remove" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-remove-suggestions" data-tag-autocomplete><div id="bulk-remove-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><button type="submit" data-bulk-preview disabled>Preview changes</button></form>
+</section>
+{{end}}
+
 {{define "pagination"}}{{if gt .Page.Pages 1}}<nav class="pagination" aria-label="Pages">{{range seq .Page.Pages}}<a {{if eq . $.Page.Page}}aria-current="page"{{end}} href="/posts?q={{queryEscape $.Query}}&page={{.}}" hx-get="/posts/grid?q={{queryEscape $.Query}}&page={{.}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape $.Query}}&page={{.}}">{{.}}</a>{{end}}</nav>{{end}}{{end}}
