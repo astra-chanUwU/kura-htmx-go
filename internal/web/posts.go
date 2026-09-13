@@ -41,7 +41,7 @@ func (s *Server) browseData(r *http.Request) (viewData, error) {
 	if encoded := r.URL.Query().Encode(); encoded != "" {
 		source += "?" + encoded
 	}
-	return viewData{Title: "Posts — Kura", ActiveNav: "posts", Page: p, Tags: tags, TagGroups: groupTags(tags), Query: p.Query, BulkSource: source}, nil
+	return viewData{Title: "Posts — Kura", ActiveNav: "posts", Page: p, Tags: tags, TagGroups: groupTags(tags), Query: p.Query, BulkSource: source, ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes}, nil
 }
 
 func (s *Server) posts(w http.ResponseWriter, r *http.Request) {

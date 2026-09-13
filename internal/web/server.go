@@ -61,6 +61,8 @@ type viewData struct {
 	BulkPreview                                  archive.BulkTagPreview
 	BulkPostIDs, BulkAddTags, BulkRemoveTags     string
 	BulkSource                                   string
+	ExportMaxPosts                               int
+	ExportMaxBytes, ExportBytes                  int64
 }
 
 func New(store *archive.Store, mediaRoot string) (*Server, error) {
@@ -166,6 +168,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /setup/passkey/finish", s.setupPasskeyFinish)
 	mux.HandleFunc("GET /posts", s.posts)
 	mux.HandleFunc("GET /posts/grid", s.grid)
+	mux.HandleFunc("GET /posts/export", s.selectedExport)
 	mux.HandleFunc("POST /posts/bulk-tags/preview", s.previewBulkTags)
 	mux.HandleFunc("POST /posts/bulk-tags/apply", s.applyBulkTags)
 	mux.HandleFunc("GET /tags/suggest", s.tagSuggestions)
@@ -184,6 +187,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /pools/new", s.newPool)
 	mux.HandleFunc("POST /pools", s.createPool)
 	mux.HandleFunc("GET /pools/{slug}", s.pool)
+	mux.HandleFunc("GET /pools/{slug}/export", s.poolExport)
 	mux.HandleFunc("GET /pools/{slug}/edit", s.editPool)
 	mux.HandleFunc("POST /pools/{slug}/edit", s.updatePool)
 	mux.HandleFunc("GET /register", s.registerForm)

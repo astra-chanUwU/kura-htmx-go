@@ -131,7 +131,14 @@ func TestBulkSelectionResetsOnHTMXHistoryRestore(t *testing.T) {
 	server, _ := testServer(t)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/bulk-selection.js", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "htmx:historyRestore") {
+	body := response.Body.String()
+	historyRestore := strings.Index(body, "htmx:historyRestore")
+	beforeHistorySave := strings.Index(body, "htmx:beforeHistorySave")
+	restored := strings.Index(body, "htmx:restored")
+	resetCallback := strings.Index(body, "const restore=")
+	popstate := strings.Index(body, "popstate")
+	pageshow := strings.Index(body, "pageshow")
+	if response.Code != http.StatusOK || beforeHistorySave < 0 || historyRestore < 0 || restored < 0 || popstate < 0 || pageshow < 0 || resetCallback < 0 || !strings.Contains(body[resetCallback:], "reset();bind();syncSelection()") || !strings.Contains(body[popstate:], "setTimeout(restore,0)") {
 		t.Fatalf("bulk selection script does not reset restored history state: status=%d body=%s", response.Code, response.Body.String())
 	}
 }

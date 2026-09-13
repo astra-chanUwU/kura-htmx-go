@@ -13,17 +13,24 @@
 </aside>
 <section class="results">
 <div class="result-head"><b>{{.Page.Total}} posts</b>{{if .Query}}<span>matching “{{.Query}}”</span>{{end}}</div>
+{{template "export-toolbar" .}}
 {{if .User}}{{if .User.CanUpload}}{{template "bulk-tag-toolbar" .}}{{end}}{{end}}
-{{if .Page.Posts}}<div class="grid">{{range .Page.Posts}}{{if $.User}}{{if $.User.CanUpload}}<article class="bulk-card"><label class="bulk-check"><input type="checkbox" data-bulk-post="{{.ID}}" data-bulk-post-checkbox><span class="visually-hidden">Select post {{.ID}}</span></label><a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a></article>{{else}}<a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a>{{end}}{{else}}<a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a>{{end}}{{end}}</div>{{else}}<div class="empty"><b>No posts found.</b><p>Try fewer tags or <a href="/posts">browse all posts</a>.</p></div>{{end}}
+{{if .Page.Posts}}<div class="grid">{{range .Page.Posts}}<article class="bulk-card"><label class="bulk-check"><input type="checkbox" data-export-post="{{.ID}}" data-export-bytes="{{.ByteSize}}"{{if $.User}}{{if $.User.CanUpload}} data-bulk-post="{{.ID}}" data-bulk-post-checkbox{{end}}{{end}}><span class="visually-hidden">Select post {{.ID}}</span></label><a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a></article>{{end}}</div>{{else}}<div class="empty"><b>No posts found.</b><p>Try fewer tags or <a href="/posts">browse all posts</a>.</p></div>{{end}}
 {{template "pagination" .}}
 </section>
 </div>
 {{end}}
 
+{{define "export-toolbar"}}
+<section class="export-toolbar" data-selection-toolbar>
+<div class="bulk-selection-head"><b><span data-selection-count>0</span> selected</b><small><span data-selection-bytes>0 B</span> · {{.ExportMaxPosts}} images / {{humanBytes .ExportMaxBytes}} maximum</small><button type="button" data-selection-select-page>Select this page</button><button type="button" data-selection-clear>Clear</button></div>
+<form method="get" action="/posts/export" class="export-form" data-export-form><button type="submit" name="name" value="tagged" data-export-submit disabled>Tagged ZIP</button><button type="submit" name="name" value="original" data-export-submit disabled>Original-name ZIP</button></form>
+</section>
+{{end}}
+
 {{define "bulk-tag-toolbar"}}
 <section class="bulk-tag-toolbar" data-bulk-toolbar>
-<div class="bulk-selection-head"><b><span data-bulk-count>0</span> selected</b><small>24 posts maximum</small><button type="button" data-bulk-select-page>Select this page</button><button type="button" data-bulk-clear>Clear</button></div>
-<form method="post" action="/posts/bulk-tags/preview" class="bulk-tag-form" data-bulk-form><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="source" value="{{.BulkSource}}"><label>Add tags<div class="tag-autocomplete"><input name="add_tags" placeholder="artist:sample_artist black_hair" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-add-suggestions" data-tag-autocomplete><div id="bulk-add-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><label>Remove tags<div class="tag-autocomplete"><input name="remove_tags" placeholder="tags to remove" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-remove-suggestions" data-tag-autocomplete><div id="bulk-remove-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><button type="submit" data-bulk-preview disabled>Preview changes</button></form>
+<small>Bulk tags: 24 posts maximum</small><form method="post" action="/posts/bulk-tags/preview" class="bulk-tag-form" data-bulk-form><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="source" value="{{.BulkSource}}"><label>Add tags<div class="tag-autocomplete"><input name="add_tags" placeholder="artist:sample_artist black_hair" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-add-suggestions" data-tag-autocomplete><div id="bulk-add-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><label>Remove tags<div class="tag-autocomplete"><input name="remove_tags" placeholder="tags to remove" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-remove-suggestions" data-tag-autocomplete><div id="bulk-remove-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><button type="submit" data-bulk-preview disabled>Preview changes</button></form>
 </section>
 {{end}}
 

@@ -16,8 +16,9 @@
 - Generate thumbnails on disk.
 - Moderate tags, sources, and draft/published state, including bounded bulk tag deltas with an explicit preview.
 - Enforce moderator upload ownership, admin deletion, and super-admin-only admin role changes.
+- Download selected images from the current browse page or an authorized pool as a portable ZIP containing original JPEG, PNG, or GIF bytes and `manifest.json`.
 
-The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, and a 24-post editor-only bulk tag preview/apply flow. Selection is limited to the currently visible browse/search page; pool views are not part of this first slice.
+The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, a 24-post editor-only bulk tag preview/apply flow, and a 100-image/512 MiB portable ZIP export. Export selection is limited to the currently visible browse/search page; pool exports preserve their stored order. Export access does not grant metadata-edit authority.
 
 ## Explicit non-goals
 
@@ -35,12 +36,14 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `GET /` | Sparse home, primary search, navigation |
 | `GET /posts?q=tag+tag&page=1` | Published post grid and filters |
 | `GET /posts/grid?...` | HTMX grid/rail/pagination fragment |
+| `GET /posts/export?post_ids=...&name=tagged\|original` | Download a bounded selected-image ZIP |
 | `POST /posts/bulk-tags/preview` | Preview bounded add/remove tag deltas for selected posts |
 | `POST /posts/bulk-tags/apply` | Apply a freshly authorized bounded tag delta |
 | `GET /posts/{id}` | Post detail |
 | `GET /random` | Redirect to a random published post |
 | `GET /pools` | Pool index |
 | `GET /pools/{slug}` | Ordered posts in a pool |
+| `GET /pools/{slug}/export?name=tagged\|original` | Download an authorized pool ZIP |
 | `GET/POST /register`, `GET/POST /login`, `GET/POST /recover` | Password account access and recovery |
 | `POST /auth/passkeys/...` | Passkey registration, discoverable login, and fresh verification ceremonies |
 | `GET /account` and `POST /account/...` | Favorites, pools, passkeys, password/recovery state, and sessions |

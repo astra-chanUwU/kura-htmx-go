@@ -37,7 +37,11 @@ func (s *Server) pool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "archive unavailable", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, r, "pool", viewData{Title: pool.Name + " — Kura", ActiveNav: "pools", Pool: pool})
+	var exportBytes int64
+	for _, post := range pool.Posts {
+		exportBytes += post.ByteSize
+	}
+	s.render(w, r, "pool", viewData{Title: pool.Name + " — Kura", ActiveNav: "pools", Pool: pool, ExportBytes: exportBytes, ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes})
 }
 
 func (s *Server) newPool(w http.ResponseWriter, r *http.Request) {
