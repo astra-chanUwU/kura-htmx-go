@@ -102,6 +102,10 @@ func auditActionLabel(eventType string) string {
 		return "Metadata change"
 	case "bulk_tag_change":
 		return "Bulk tag change"
+	case "tag_rename":
+		return "Tag rename"
+	case "tag_merge":
+		return "Tag merge"
 	case "quarantine":
 		return "Quarantine"
 	case "restore":

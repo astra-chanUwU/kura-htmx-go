@@ -19,6 +19,8 @@ Private draft pools remain owner-only. `viewer-one-private-draft` belongs to `vi
 
 The super-admin-only `/admin/images` view lists all post records with all, draft, published, deleted, and quarantined filters, uploader filtering, pagination, available thumbnails, and links to existing moderation/review controls. Ordinary admins receive `403` and do not see its navigation link. The view is metadata-backed; it does not scan arbitrary storage.
 
+The super-admin-only `/admin/tags` view lists canonical/display names, fixed categories, and post usage counts with bounded search, category filtering, and pagination. Rename and merge actions always begin with a non-mutating preview. Applying a preview rechecks the current super-admin role and a relation fingerprint inside the same transaction, rejects stale state, preserves rename categories, rejects collisions and cross-category merges, and records a readable immutable audit event.
+
 An ordinary admin's cross-owner delete action quarantines rather than permanently deleting. The active super admin can inspect a quarantined post at `/admin/images/{id}/review`, restore it to its recorded previous status, or permanently delete it after typing the post ID. Quarantined media is retained for review but is unavailable through normal browse, post, media, navigation, pool, favorite, download, and ZIP-export paths.
 
 ## Implemented: My uploads

@@ -90,6 +90,8 @@ type AuditPage struct {
 var auditEventTypes = []string{
 	"metadata_change",
 	"bulk_tag_change",
+	"tag_rename",
+	"tag_merge",
 	"quarantine",
 	"restore",
 	"role_change",

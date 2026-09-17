@@ -23,7 +23,7 @@
 - Keep an immutable super-admin audit history for account role/suspension changes, super-admin transfer, moderation actions, metadata edits, and permanent deletion snapshots.
 - Present graceful user-facing error pages, contextual previous/next navigation, and account-aware passkey/password/recovery defaults.
 
-The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, My uploads, super-admin image oversight, quarantine/review/permanent deletion, immutable super-admin audit history, contextual navigation, graceful errors, account-aware authentication defaults, a 24-post editor-only bulk tag preview/apply flow, and a 100-image/512 MiB portable ZIP export. Export selection is limited to the currently visible browse/search page; pool exports preserve their stored order. Export access does not grant metadata-edit authority.
+The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, My uploads, super-admin image oversight, quarantine/review/permanent deletion, immutable super-admin audit history, contextual navigation, graceful errors, account-aware authentication defaults, a 24-post editor-only bulk tag preview/apply flow, super-admin tag inventory with confirmation-gated same-category rename/merge maintenance, and a 100-image/512 MiB portable ZIP export. Export selection is limited to the currently visible browse/search page; pool exports preserve their stored order. Export access does not grant metadata-edit authority.
 
 ## Explicit non-goals
 
@@ -68,6 +68,9 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `GET /admin/images` | Super-admin-only server-wide image oversight with all/draft/published/deleted/quarantined filters and uploader filtering |
 | `GET /admin/images/{id}/review` | Super-admin review of a quarantined post |
 | `GET /admin/audit` | Super-admin-only immutable audit history with action, actor, and post filters |
+| `GET /admin/tags` | Super-admin tag inventory with bounded search, category filter, usage counts, and pagination |
+| `POST /admin/tags/preview` | Preview a super-admin tag rename or same-category merge |
+| `POST /admin/tags/apply` | Confirmation-gated, stale-preview-checked tag rename or merge |
 | `POST /admin/images/{id}/quarantine` | Super-admin quarantine action |
 | `POST /admin/images/{id}/restore` | Super-admin restore to the pre-quarantine draft/published state |
 | `POST /admin/images/{id}/permanent-delete` | Confirmation-gated super-admin permanent deletion |

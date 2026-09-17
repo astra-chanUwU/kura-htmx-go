@@ -137,11 +137,13 @@ func TestSuperAdminAuditRendersReadablePermanentDeleteFilter(t *testing.T) {
 	}
 }
 
-func TestAuditActionLabelsIncludeRegistrationInvitations(t *testing.T) {
+func TestAuditActionLabelsIncludeExtendedEvents(t *testing.T) {
 	labels := map[string]string{
 		"invite_created":  "Invitation created",
 		"invite_revoked":  "Invitation revoked",
 		"invite_consumed": "Invitation used",
+		"tag_rename":      "Tag rename",
+		"tag_merge":       "Tag merge",
 	}
 	for eventType, want := range labels {
 		if got := auditActionLabel(eventType); got != want {

@@ -54,6 +54,8 @@ type viewData struct {
 	Post                                                 archive.Post
 	Posts                                                []archive.Post
 	Tags                                                 []archive.Tag
+	TagPage                                              archive.TagPage
+	TagPreview                                           archive.TagMaintenancePreview
 	TagGroups                                            map[string][]archive.Tag
 	Pools                                                []archive.Pool
 	Pool                                                 archive.Pool
@@ -269,6 +271,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/invites", s.createAdminInvite)
 	mux.HandleFunc("POST /admin/invites/{id}/revoke", s.revokeAdminInvite)
 	mux.HandleFunc("GET /admin/images", s.adminImages)
+	mux.HandleFunc("GET /admin/tags", s.adminTags)
+	mux.HandleFunc("POST /admin/tags/preview", s.adminTagsPreview)
+	mux.HandleFunc("POST /admin/tags/apply", s.adminTagsApply)
 	mux.HandleFunc("GET /admin/audit", s.adminAudit)
 	mux.HandleFunc("POST /admin/audit/{id}/revert", s.adminAuditRevert)
 	mux.HandleFunc("GET /admin/images/{id}/review", s.adminImageReview)

@@ -16,12 +16,12 @@ There is no background service in v1. Upload work can extract metadata and creat
 - `bootstrap_tokens`: the hash and expiry of the explicitly requested one-use initial enrollment link.
 - `registration_invites`: one-use invitation token hashes, creator/invitee identity snapshots, bounded expiry, revocation, and consumption timestamps. Plaintext invite codes are never stored and are returned only at creation time.
 - `posts`: lifecycle (`draft` or `published`), permanent uploader attribution, original upload basename, original and thumbnail paths, MIME, dimensions, byte size, SHA-256, source, timestamps, and quarantine state/reason/previous status.
-- `tags`: unique normalized name, display name, and fixed category (`artist`, `character`, `copyright`, `general`, `meta`).
+- `tags`: unique normalized name, display name, and fixed category (`artist`, `character`, `copyright`, `general`, `meta`). Super-admin tag maintenance lists this inventory with bounded search/category filters and usage counts. Rename previews preserve the source category and reject existing-name collisions; merge previews require an existing target with the same category, move relationships with `ON CONFLICT DO NOTHING`, verify the source relationships are gone, then delete the source tag in one transaction.
 - `post_tags`: many-to-many post/tag assignment with assignment time.
 - `pools`: owner, draft/published visibility, stable slug, name, and description.
 - `pool_posts`: ordered many-to-many pool membership.
 - `favorites`: private user-to-post relationship.
-- `audit_events`: immutable role, suspension, super-admin transfer, quarantine, restore, metadata, bulk-tag, revert, and permanent-delete events with historical actor/target/uploader names and bounded snapshots.
+- `audit_events`: immutable role, suspension, super-admin transfer, invitation, quarantine, restore, metadata, bulk-tag, tag-rename, tag-merge, revert, and permanent-delete events with historical actor/target/uploader names and bounded snapshots. Successful tag maintenance records preserve the actor username, source/target names and categories, affected-post count, and reason.
 - `schema_migrations`: applied migration versions.
 
 SQLite foreign keys are enabled. Hashes are unique. Tag names and pool slugs are unique. Published-time and join indexes support the first browsing paths.
