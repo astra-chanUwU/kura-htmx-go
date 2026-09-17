@@ -105,7 +105,8 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 			}
 			return tag.Category + ":" + tag.Name
 		},
-		"auditLabel": auditEventLabel,
+		"auditLabel":       auditEventLabel,
+		"auditActionLabel": auditActionLabel,
 		"seq": func(n int) []int {
 			out := make([]int, n)
 			for i := range out {

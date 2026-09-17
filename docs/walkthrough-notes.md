@@ -25,6 +25,8 @@ An ordinary admin's cross-owner delete action quarantines rather than permanentl
 
 `/uploads` is available to active moderators and admins. It is strictly uploader-scoped, excludes deleted and quarantined posts, provides all/draft/published filters and 24-item pagination, and links to preview/edit plus owner-scoped publish/unpublish actions. An owner can permanently delete an upload only after typing `DELETE`; the operation removes metadata, original, and thumbnail.
 
+The super-admin-only `/admin/audit` view retains immutable moderation and account history. Every role transition, suspension/unsuspension, super-admin transfer, quarantine/restore, metadata change, bulk-tag change, and permanent post deletion is written in the same archive transaction as its mutation. Permanent deletion stores actor and uploader names, post ID, context, and a bounded final metadata snapshot before removing the post row; the event is informational and has no restore action. Ordinary admins cannot read this view.
+
 Status changes have ordinary redirect fallbacks and history-neutral HTMX fragment updates; permanent deletion uses an ordinary confirmation form and redirect. The archive boundary reloads the actor's current role, suspension state, and ownership, so a stale or suspended session cannot enumerate or mutate uploads.
 
 ## Implemented: contextual post navigation

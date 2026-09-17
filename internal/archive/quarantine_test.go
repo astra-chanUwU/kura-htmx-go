@@ -56,7 +56,7 @@ func TestDemotingUploaderQuarantinesDraftsRevokesSessionsAndKeepsPublishedPosts(
 	if err = s.DB.QueryRow(`SELECT count(*) FROM audit_events WHERE event_type='role_change' AND target_user_id=?`, uploader.ID).Scan(&eventCount); err != nil {
 		t.Fatal(err)
 	}
-	if eventCount != 1 {
+	if eventCount != 2 {
 		t.Fatalf("role-change audit count=%d", eventCount)
 	}
 	if err = s.DB.QueryRow(`SELECT count(*) FROM audit_events WHERE event_type='role_change_quarantine' AND post_id=?`, draft).Scan(&eventCount); err != nil {

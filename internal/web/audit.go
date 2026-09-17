@@ -93,5 +93,32 @@ func auditEventLabel(event archive.AuditEvent) string {
 	if event.EventType == "revert" && event.RevertedEventID > 0 {
 		return fmt.Sprintf("revert of #%d", event.RevertedEventID)
 	}
-	return event.EventType
+	return auditActionLabel(event.EventType)
+}
+
+func auditActionLabel(eventType string) string {
+	switch eventType {
+	case "metadata_change":
+		return "Metadata change"
+	case "bulk_tag_change":
+		return "Bulk tag change"
+	case "quarantine":
+		return "Quarantine"
+	case "restore":
+		return "Restore"
+	case "role_change":
+		return "Role change"
+	case "role_change_quarantine":
+		return "Draft quarantine during role change"
+	case "suspension_change":
+		return "Account suspension change"
+	case "super_admin_transfer":
+		return "Super-admin transfer"
+	case "permanent_delete":
+		return "Permanent deletion"
+	case "revert":
+		return "Revert"
+	default:
+		return eventType
+	}
 }

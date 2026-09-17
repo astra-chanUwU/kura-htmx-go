@@ -179,6 +179,20 @@ func (s *Store) PermanentDeletePost(ctx context.Context, actor User, id int64) (
 	if !current.IsSuperAdmin && (post.UploaderID == 0 || post.UploaderID != current.ID) {
 		return Post{}, ErrPermission
 	}
+	if err = loadPostTagsTx(ctx, tx, &post); err != nil {
+		return Post{}, err
+	}
+	finalSnapshot, err := encodeAuditSnapshot(auditFinalSnapshotFromPost(post))
+	if err != nil {
+		return Post{}, err
+	}
+	reason := "permanent deletion"
+	if post.QuarantineReason != "" {
+		reason = "permanent deletion after quarantine: " + post.QuarantineReason
+	}
+	if err = insertAuditRecordTx(ctx, tx, current, "permanent_delete", post.UploaderID, post.Uploader, post.ID, reason, finalSnapshot, "", 0); err != nil {
+		return Post{}, err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM posts WHERE id=?`, id); err != nil {
 		return Post{}, err
 	}

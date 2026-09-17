@@ -72,6 +72,204 @@ func TestCrossOwnerMetadataAndBulkChangesCreateAuditEventsButOwnChangesDoNot(t *
 	}
 }
 
+func TestAccountLifecycleAuditCoversEveryRoleTransitionSuspensionAndSuperAdminTransfer(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "audit-lifecycle-root", "audit lifecycle root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.Register(ctx, "audit-lifecycle-target", "audit lifecycle target password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transferTarget, err := store.Register(ctx, "audit-lifecycle-transfer", "audit lifecycle transfer password")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = store.SetUserRole(ctx, root, target.ID, "moderator"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(ctx, root, target.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserSuspended(ctx, root, target.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserSuspended(ctx, root, target.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.TransferSuperAdmin(ctx, root, transferTarget.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	newRoot, err := store.User(ctx, transferTarget.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ListAuditEvents(ctx, newRoot, AuditFilter{PerPage: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string][]AuditEvent{}
+	for _, event := range page.Events {
+		seen[event.EventType] = append(seen[event.EventType], event)
+	}
+	for _, eventType := range []string{"role_change", "suspension_change", "super_admin_transfer"} {
+		if len(seen[eventType]) == 0 {
+			t.Fatalf("audit log omitted %q event: %+v", eventType, page.Events)
+		}
+	}
+	if len(seen["role_change"]) != 3 {
+		t.Fatalf("role transition audit count=%d, want 3: %+v", len(seen["role_change"]), seen["role_change"])
+	}
+	if len(seen["suspension_change"]) != 2 {
+		t.Fatalf("suspension audit count=%d, want 2: %+v", len(seen["suspension_change"]), seen["suspension_change"])
+	}
+	if event := seen["super_admin_transfer"][0]; event.Actor != root.Username || event.Uploader != transferTarget.Username || event.FromRole != "super_admin" || event.ToRole != "super_admin" {
+		t.Fatalf("super-admin transfer lost historical identities or roles: %+v", event)
+	}
+	var suspendedEvent AuditEvent
+	for _, event := range seen["suspension_change"] {
+		if event.FromRole == "active" && event.ToRole == "suspended" {
+			suspendedEvent = event
+			break
+		}
+	}
+	if suspendedEvent.Uploader != target.Username || suspendedEvent.FromRole != "active" || suspendedEvent.ToRole != "suspended" {
+		t.Fatalf("suspension event did not retain account transition: %+v", seen["suspension_change"])
+	}
+}
+
+func TestPermanentDeleteRetainsBoundedFinalMetadataAndHistoricalIdentity(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "audit-delete-root", "audit delete root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.Register(ctx, "audit-delete-owner", "audit delete owner password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(ctx, root, owner.ID, "moderator"); err != nil {
+		t.Fatal(err)
+	}
+	post, err := store.CreatePost(ctx, owner, NewPost{
+		Status: "published", OriginalPath: "originals/audit-delete.png", ThumbnailPath: "thumbs/audit-delete.jpg",
+		MIMEType: "image/png", OriginalFilename: "final.png", Width: 640, Height: 480, ByteSize: 1234,
+		SHA256: "audit-delete-sha", Source: "https://delete.example", Tags: []string{"delete_tag"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.PermanentDeletePost(ctx, root, post.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Post(ctx, post.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("post row survived permanent deletion: %v", err)
+	}
+
+	page, err := store.ListAuditEvents(ctx, root, AuditFilter{EventType: "permanent_delete", PostID: post.ID, PerPage: 10})
+	if err != nil || len(page.Events) != 1 {
+		t.Fatalf("permanent-delete audit page=%+v err=%v", page, err)
+	}
+	event := page.Events[0]
+	if event.Actor != root.Username || event.Uploader != owner.Username || event.PostID != post.ID || event.Reason == "" || event.BeforeSnapshot == "" || event.AfterSnapshot != "" {
+		t.Fatalf("permanent-delete event lost required context: %+v", event)
+	}
+	for _, want := range []string{"originals/audit-delete.png", "image/png", "final.png", "audit-delete-sha", "delete_tag", "640", "1234"} {
+		if !strings.Contains(event.BeforeSnapshot, want) {
+			t.Fatalf("permanent-delete snapshot omitted %q: %s", want, event.BeforeSnapshot)
+		}
+	}
+	if _, err = store.DB.ExecContext(ctx, `DELETE FROM users WHERE id=?`, owner.ID); err != nil {
+		t.Fatalf("delete owner after retained audit event: %v", err)
+	}
+	page, err = store.ListAuditEvents(ctx, root, AuditFilter{EventType: "permanent_delete", PostID: post.ID, PerPage: 10})
+	if err != nil || len(page.Events) != 1 || page.Events[0].Uploader != owner.Username {
+		t.Fatalf("permanent-delete event lost historical uploader identity: %+v err=%v", page, err)
+	}
+}
+
+func TestPermanentDeleteAuditSnapshotBoundsAbortDeletion(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "audit-delete-bounds-root", "audit delete bounds root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.Register(ctx, "audit-delete-bounds-owner", "audit delete bounds owner password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(ctx, root, owner.ID, "moderator"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.DB.ExecContext(ctx, `INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source,uploader_id) VALUES('published','originals/bounds.png','thumbs/bounds.jpg','image/png',1,1,1,'audit-delete-bounds',?,?)`, strings.Repeat("s", maxAuditSourceLength+1), owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.PermanentDeletePost(ctx, root, postID); !errors.Is(err, ErrAuditSnapshot) {
+		t.Fatalf("oversized permanent-delete snapshot err=%v, want ErrAuditSnapshot", err)
+	}
+	var count int
+	if err = store.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts WHERE id=?`, postID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("oversized snapshot deleted post count=%d err=%v", count, err)
+	}
+	if err = store.DB.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE post_id=?`, postID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("oversized snapshot left audit events count=%d err=%v", count, err)
+	}
+}
+
+func TestAccountAndDeleteMutationsRollBackWhenAuditInsertFails(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "audit-rollback-root", "audit rollback root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.Register(ctx, "audit-rollback-target", "audit rollback target password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.DB.ExecContext(ctx, `CREATE TRIGGER reject_role_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='role_change' BEGIN SELECT RAISE(ABORT,'audit blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(ctx, root, target.ID, "moderator"); err == nil {
+		t.Fatal("role mutation succeeded despite audit failure")
+	}
+	var role string
+	if err = store.DB.QueryRowContext(ctx, `SELECT role FROM users WHERE id=?`, target.ID).Scan(&role); err != nil || role != "viewer" {
+		t.Fatalf("role mutation was not rolled back: role=%q err=%v", role, err)
+	}
+	var events int
+	if err = store.DB.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE target_user_id=?`, target.ID).Scan(&events); err != nil || events != 0 {
+		t.Fatalf("failed role mutation left audit events=%d err=%v", events, err)
+	}
+	if _, err = store.DB.ExecContext(ctx, `DROP TRIGGER reject_role_audit`); err != nil {
+		t.Fatal(err)
+	}
+	post, err := store.CreatePost(ctx, root, NewPost{Status: "published", OriginalPath: "originals/rollback.png", ThumbnailPath: "thumbs/rollback.jpg", MIMEType: "image/png", Width: 1, Height: 1, ByteSize: 1, SHA256: "audit-rollback-post"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.DB.ExecContext(ctx, `CREATE TRIGGER reject_delete_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='permanent_delete' BEGIN SELECT RAISE(ABORT,'audit blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.PermanentDeletePost(ctx, root, post.ID); err == nil {
+		t.Fatal("permanent deletion succeeded despite audit failure")
+	}
+	if _, err = store.Post(ctx, post.ID); err != nil {
+		t.Fatalf("delete mutation was not rolled back: %v", err)
+	}
+}
+
 func TestAuditEventsRequireCurrentSuperAdminAndKeepExistingModerationEvents(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
@@ -322,7 +520,7 @@ func TestAuditRevertRestoresExactSnapshotAndRejectsConflictsOrUnavailablePosts(t
 	if _, err = store.PermanentDeletePost(ctx, root, deleted.ID); err != nil {
 		t.Fatal(err)
 	}
-	if retained, err := store.ListAuditEvents(ctx, root, AuditFilter{PostID: deleted.ID, PerPage: 10}); err != nil || len(retained.Events) != 1 {
+	if retained, err := store.ListAuditEvents(ctx, root, AuditFilter{PostID: deleted.ID, PerPage: 10}); err != nil || len(retained.Events) != 2 {
 		t.Fatalf("post deletion removed audit history: page=%+v err=%v", retained, err)
 	}
 	if _, err = store.Post(ctx, deleted.ID); !errors.Is(err, sql.ErrNoRows) {

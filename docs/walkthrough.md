@@ -66,6 +66,7 @@ Each setup method requires a separate fresh database to test first-time enrollme
 - [ ] As your super admin, open Admin → Images. Check the draft/published/deleted/quarantined filters, uploader identities, thumbnails, pagination, and links to existing post/edit/review controls. Confirm ordinary admins do not see or open this view. Open a quarantined post, restore it to its prior status, then quarantine and permanently delete a disposable post by typing its post ID.
 - [ ] Demote a disposable moderator/admin to viewer. Confirm its sessions are revoked, its non-deleted drafts are quarantined, published uploads remain published, and re-promoting the account does not auto-restore those drafts.
 - [ ] As your super admin, promote/demote a disposable admin. Check protection against suspending/demoting the active super admin.
+- [ ] As your super admin, open Admin → Audit. Filter readable role-change, suspension, super-admin-transfer, and permanent-deletion events; confirm actor/account/uploader identities remain visible after the affected post or account is gone, the final deletion snapshot is bounded and read-only, and ordinary admins receive `403`.
 - [ ] If testing authority transfer, do it last: transfer to a disposable active admin and confirm only the recipient retains super-admin controls.
 - [ ] Check Back/Forward after inline account and admin actions. With JavaScript disabled, check the ordinary favorite/pool/admin forms still submit and redirect.
 

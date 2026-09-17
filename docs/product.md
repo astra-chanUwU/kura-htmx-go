@@ -19,9 +19,10 @@
 - Download selected images from the current browse page or an authorized pool as a portable ZIP containing original JPEG, PNG, or GIF bytes and `manifest.json`.
 - Show upload-capable users their own non-deleted uploads with draft/published status management.
 - Provide super-admin-only server-wide image oversight, quarantine review, restoration, and permanent deletion.
+- Keep an immutable super-admin audit history for account role/suspension changes, super-admin transfer, moderation actions, metadata edits, and permanent deletion snapshots.
 - Present graceful user-facing error pages, contextual previous/next navigation, and account-aware passkey/password/recovery defaults.
 
-The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, My uploads, super-admin image oversight, quarantine/review/permanent deletion, contextual navigation, graceful errors, account-aware authentication defaults, a 24-post editor-only bulk tag preview/apply flow, and a 100-image/512 MiB portable ZIP export. Export selection is limited to the currently visible browse/search page; pool exports preserve their stored order. Export access does not grant metadata-edit authority.
+The implemented vertical slice covers browsing, identity, role boundaries, uploads, categorized tag entry with bounded editor-only autocomplete, favorites, pool visibility, account administration, My uploads, super-admin image oversight, quarantine/review/permanent deletion, immutable super-admin audit history, contextual navigation, graceful errors, account-aware authentication defaults, a 24-post editor-only bulk tag preview/apply flow, and a 100-image/512 MiB portable ZIP export. Export selection is limited to the currently visible browse/search page; pool exports preserve their stored order. Export access does not grant metadata-edit authority.
 
 ## Explicit non-goals
 
@@ -64,6 +65,7 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `POST /uploads/{id}/permanent-delete` | Confirmation-gated permanent deletion of an owned upload |
 | `GET /admin/images` | Super-admin-only server-wide image oversight with all/draft/published/deleted/quarantined filters and uploader filtering |
 | `GET /admin/images/{id}/review` | Super-admin review of a quarantined post |
+| `GET /admin/audit` | Super-admin-only immutable audit history with action, actor, and post filters |
 | `POST /admin/images/{id}/quarantine` | Super-admin quarantine action |
 | `POST /admin/images/{id}/restore` | Super-admin restore to the pre-quarantine draft/published state |
 | `POST /admin/images/{id}/permanent-delete` | Confirmation-gated super-admin permanent deletion |

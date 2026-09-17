@@ -16,6 +16,10 @@ const (
 	maxAuditEventTypeLength = 64
 	maxAuditReasonLength    = 500
 	maxAuditSnapshotBytes   = 32768
+	maxAuditPathLength      = 4096
+	maxAuditMIMETypeLength  = 128
+	maxAuditFilenameLength  = 255
+	maxAuditSHA256Length    = 128
 	maxAuditSourceLength    = 4096
 	maxAuditTags            = 512
 )
@@ -32,10 +36,22 @@ type auditTagSnapshot struct {
 }
 
 type auditSnapshot struct {
-	Source      string             `json:"source"`
-	Status      string             `json:"status"`
-	PublishedAt string             `json:"published_at"`
-	Tags        []auditTagSnapshot `json:"tags"`
+	Source               string             `json:"source"`
+	Status               string             `json:"status"`
+	PublishedAt          string             `json:"published_at"`
+	OriginalPath         string             `json:"original_path,omitempty"`
+	ThumbnailPath        string             `json:"thumbnail_path,omitempty"`
+	MIMEType             string             `json:"mime_type,omitempty"`
+	OriginalFilename     string             `json:"original_filename,omitempty"`
+	Width                int                `json:"width,omitempty"`
+	Height               int                `json:"height,omitempty"`
+	ByteSize             int64              `json:"byte_size,omitempty"`
+	SHA256               string             `json:"sha256,omitempty"`
+	DeletedAt            string             `json:"deleted_at,omitempty"`
+	QuarantinedAt        string             `json:"quarantined_at,omitempty"`
+	QuarantineReason     string             `json:"quarantine_reason,omitempty"`
+	QuarantinePrevStatus string             `json:"quarantine_previous_status,omitempty"`
+	Tags                 []auditTagSnapshot `json:"tags"`
 }
 
 type AuditEvent struct {
@@ -78,6 +94,9 @@ var auditEventTypes = []string{
 	"restore",
 	"role_change",
 	"role_change_quarantine",
+	"suspension_change",
+	"super_admin_transfer",
+	"permanent_delete",
 	"revert",
 }
 
@@ -107,6 +126,23 @@ func auditSnapshotFromPost(post Post) auditSnapshot {
 		}
 		return snapshot.Tags[i].Category < snapshot.Tags[j].Category
 	})
+	return snapshot
+}
+
+func auditFinalSnapshotFromPost(post Post) auditSnapshot {
+	snapshot := auditSnapshotFromPost(post)
+	snapshot.OriginalPath = post.OriginalPath
+	snapshot.ThumbnailPath = post.ThumbnailPath
+	snapshot.MIMEType = post.MIMEType
+	snapshot.OriginalFilename = post.OriginalFilename
+	snapshot.Width = post.Width
+	snapshot.Height = post.Height
+	snapshot.ByteSize = post.ByteSize
+	snapshot.SHA256 = post.SHA256
+	snapshot.DeletedAt = post.DeletedAt
+	snapshot.QuarantinedAt = post.QuarantinedAt
+	snapshot.QuarantineReason = post.QuarantineReason
+	snapshot.QuarantinePrevStatus = post.QuarantinePreviousStatus
 	return snapshot
 }
 
@@ -157,6 +193,9 @@ func validateAuditSnapshotValue(snapshot auditSnapshot) error {
 	if len([]rune(snapshot.Source)) > maxAuditSourceLength || len(snapshot.PublishedAt) > 64 || len(snapshot.Tags) > maxAuditTags {
 		return fmt.Errorf("%w: snapshot field exceeds limit", ErrAuditSnapshot)
 	}
+	if len([]rune(snapshot.OriginalPath)) > maxAuditPathLength || len([]rune(snapshot.ThumbnailPath)) > maxAuditPathLength || len([]rune(snapshot.MIMEType)) > maxAuditMIMETypeLength || len([]rune(snapshot.OriginalFilename)) > maxAuditFilenameLength || len([]rune(snapshot.SHA256)) > maxAuditSHA256Length || len([]rune(snapshot.DeletedAt)) > 64 || len([]rune(snapshot.QuarantinedAt)) > 64 || len([]rune(snapshot.QuarantineReason)) > maxAuditReasonLength || len([]rune(snapshot.QuarantinePrevStatus)) > 16 || snapshot.Width < 0 || snapshot.Height < 0 || snapshot.ByteSize < 0 {
+		return fmt.Errorf("%w: snapshot field exceeds limit", ErrAuditSnapshot)
+	}
 	if snapshot.PublishedAt != "" {
 		if _, err := time.Parse(time.RFC3339, snapshot.PublishedAt); err != nil {
 			return fmt.Errorf("%w: invalid published timestamp", ErrAuditSnapshot)
@@ -189,19 +228,28 @@ func loadAuditPost(ctx context.Context, tx *sql.Tx, id int64) (Post, error) {
 	if err != nil {
 		return Post{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category FROM tags t JOIN post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=? ORDER BY t.category,t.name`, id)
-	if err != nil {
+	if err = loadPostTagsTx(ctx, tx, &post); err != nil {
 		return Post{}, err
+	}
+	return post, nil
+}
+
+func loadPostTagsTx(ctx context.Context, queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, post *Post) error {
+	rows, err := queryer.QueryContext(ctx, `SELECT t.id,t.name,t.display_name,t.category FROM tags t JOIN post_tags pt ON pt.tag_id=t.id WHERE pt.post_id=? ORDER BY t.category,t.name`, post.ID)
+	if err != nil {
+		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var tag Tag
 		if err = rows.Scan(&tag.ID, &tag.Name, &tag.DisplayName, &tag.Category); err != nil {
-			return Post{}, err
+			return err
 		}
 		post.Tags = append(post.Tags, tag)
 	}
-	return post, rows.Err()
+	return rows.Err()
 }
 
 func insertAuditRecordTx(ctx context.Context, tx *sql.Tx, actor User, eventType string, targetUserID int64, uploader string, postID int64, reason, before, after string, revertedEventID int64) error {

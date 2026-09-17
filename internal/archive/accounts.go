@@ -312,14 +312,16 @@ func (s *Store) SetUserRole(ctx context.Context, actor User, targetID int64, rol
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, targetID); err != nil {
 		return err
 	}
+	if target.Role != role {
+		if err = insertAuditRecordWithRolesTx(ctx, tx, current, "role_change", target.ID, target.Username, 0, target.Role, role, "role changed", "", "", 0); err != nil {
+			return err
+		}
+	}
 	if target.Role != "viewer" && role == "viewer" {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, targetID); err != nil {
 			return err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		if err = insertAuditRecordWithRolesTx(ctx, tx, current, "role_change", target.ID, target.Username, 0, target.Role, role, "role changed", "", "", 0); err != nil {
-			return err
-		}
 		rows, queryErr := tx.QueryContext(ctx, `SELECT id FROM posts WHERE uploader_id=? AND status='draft' AND deleted_at IS NULL AND quarantined_at IS NULL`, targetID)
 		if queryErr != nil {
 			return queryErr
@@ -376,6 +378,17 @@ func (s *Store) SetUserSuspended(ctx context.Context, actor User, targetID int64
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET suspended_at=? WHERE id=?`, value, targetID); err != nil {
 		return err
 	}
+	if (target.SuspendedAt != "") != suspended {
+		from, to := "active", "suspended"
+		reason := "account suspended"
+		if !suspended {
+			from, to = "suspended", "active"
+			reason = "account unsuspended"
+		}
+		if err = insertAuditRecordWithRolesTx(ctx, tx, current, "suspension_change", target.ID, target.Username, 0, from, to, reason, "", "", 0); err != nil {
+			return err
+		}
+	}
 	if suspended {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, targetID); err != nil {
 			return err
@@ -405,6 +418,14 @@ func (s *Store) TransferSuperAdmin(ctx context.Context, actor User, targetID int
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET role='admin',is_super_admin=1 WHERE id=?`, target.ID); err != nil {
+		return err
+	}
+	if target.Role != "admin" {
+		if err = insertAuditRecordWithRolesTx(ctx, tx, current, "role_change", target.ID, target.Username, 0, target.Role, "admin", "role changed during super-admin transfer", "", "", 0); err != nil {
+			return err
+		}
+	}
+	if err = insertAuditRecordWithRolesTx(ctx, tx, current, "super_admin_transfer", target.ID, target.Username, 0, "super_admin", "super_admin", "super-admin authority transferred", "", "", 0); err != nil {
 		return err
 	}
 	return tx.Commit()

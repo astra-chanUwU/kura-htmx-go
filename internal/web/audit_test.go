@@ -113,3 +113,26 @@ func TestSuperAdminAuditRevertRouteUsesCSRFAndRedirects(t *testing.T) {
 		t.Fatalf("route revert did not restore post=%+v err=%v", restored, err)
 	}
 }
+
+func TestSuperAdminAuditRendersReadablePermanentDeleteFilter(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "audit-delete-web-root", "audit delete web root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	post, err := store.CreatePost(ctx, root, archive.NewPost{Status: "published", OriginalPath: "originals/audit-delete-web.png", ThumbnailPath: "thumbs/audit-delete-web.jpg", MIMEType: "image/png", OriginalFilename: "delete-web.png", Width: 4, Height: 3, ByteSize: 12, SHA256: "audit-delete-web", Source: "https://delete-web.example", Tags: []string{"delete_web"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.PermanentDeletePost(ctx, root, post.ID); err != nil {
+		t.Fatal(err)
+	}
+	rootSession, _ := store.NewSession(ctx, &root.ID)
+	path := "/admin/audit?action=permanent_delete&post=" + strconv.FormatInt(post.ID, 10)
+	response := sessionRequest(t, server.Handler(), http.MethodGet, path, nil, rootSession)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "Permanent deletion") || !strings.Contains(body, "Final snapshot") || !strings.Contains(body, "delete-web.png") {
+		t.Fatalf("permanent-delete audit rendering status=%d body=%s", response.Code, body)
+	}
+}
