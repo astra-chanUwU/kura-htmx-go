@@ -136,3 +136,16 @@ func TestSuperAdminAuditRendersReadablePermanentDeleteFilter(t *testing.T) {
 		t.Fatalf("permanent-delete audit rendering status=%d body=%s", response.Code, body)
 	}
 }
+
+func TestAuditActionLabelsIncludeRegistrationInvitations(t *testing.T) {
+	labels := map[string]string{
+		"invite_created":  "Invitation created",
+		"invite_revoked":  "Invitation revoked",
+		"invite_consumed": "Invitation used",
+	}
+	for eventType, want := range labels {
+		if got := auditActionLabel(eventType); got != want {
+			t.Errorf("auditActionLabel(%q)=%q, want %q", eventType, got, want)
+		}
+	}
+}

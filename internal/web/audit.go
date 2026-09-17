@@ -116,6 +116,12 @@ func auditActionLabel(eventType string) string {
 		return "Super-admin transfer"
 	case "permanent_delete":
 		return "Permanent deletion"
+	case "invite_created":
+		return "Invitation created"
+	case "invite_revoked":
+		return "Invitation revoked"
+	case "invite_consumed":
+		return "Invitation used"
 	case "revert":
 		return "Revert"
 	default:
