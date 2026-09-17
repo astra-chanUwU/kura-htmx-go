@@ -41,7 +41,16 @@
       method: 'POST', credentials: 'same-origin', body: JSON.stringify(body || {}),
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf(), ...(challenge ? { 'X-Kura-Challenge': challenge } : {}), ...(extraHeaders || {}) },
     });
-    if (!response.ok) throw new Error((await response.text()).trim() || 'Passkey request failed');
+    if (!response.ok) {
+      let message = 'Passkey request failed.';
+      try {
+        const payload = await response.json();
+        if (typeof payload.error === 'string' && payload.error) message = payload.error;
+      } catch (_) {
+        // Keep network or legacy server failures generic.
+      }
+      throw new Error(message);
+    }
     return response.json();
   }
   function showRecovery(code) {

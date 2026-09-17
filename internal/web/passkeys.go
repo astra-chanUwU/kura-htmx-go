@@ -69,32 +69,32 @@ func (s *Server) passkeyRegistrationBegin(w http.ResponseWriter, r *http.Request
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The passkey request could not be read.")
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > 64 {
-		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey name must be between 1 and 64 characters.")
 		return
 	}
 	user, err := archive.NewPasskeyRegistrationUser(input.Username)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The username could not be accepted.")
 		return
 	}
 	creation, session, err := s.passkeys.BeginRegistration(user)
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	state, err := json.Marshal(passkeyRegistrationState{Session: *session, Username: user.Username, Name: input.Name, Handle: user.PasskeyHandle})
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	token, err := s.store.CreateAuthChallenge(r.Context(), "register", nil, state, 5*time.Minute)
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -104,18 +104,18 @@ func (s *Server) passkeyRegistrationBegin(w http.ResponseWriter, r *http.Request
 func (s *Server) passkeyRegistrationFinish(w http.ResponseWriter, r *http.Request) {
 	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "register")
 	if err != nil {
-		http.Error(w, archive.ErrInvalidChallenge.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The passkey request has expired. Please try again.")
 		return
 	}
 	var state passkeyRegistrationState
 	if err = json.Unmarshal(challenge.Payload, &state); err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	user := archive.User{Username: state.Username, PasskeyHandle: state.Handle}
 	credential, err := s.passkeys.FinishRegistration(user, state.Session, r)
 	if err != nil {
-		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
 	created, recovery, err := s.store.CreatePasskeyOnlyAccountWithHandle(r.Context(), state.Username, state.Name, state.Handle, *credential)
@@ -124,11 +124,11 @@ func (s *Server) passkeyRegistrationFinish(w http.ResponseWriter, r *http.Reques
 		if errors.Is(err, archive.ErrUsernameTaken) {
 			status = http.StatusConflict
 		}
-		http.Error(w, err.Error(), status)
+		s.respondError(w, r, status, "Passkey registration could not be completed.")
 		return
 	}
 	if err = s.replaceSession(w, r, created.ID); err != nil {
-		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	writeJSON(w, map[string]any{"redirect": "/account", "recoveryCode": recovery})
@@ -137,17 +137,17 @@ func (s *Server) passkeyRegistrationFinish(w http.ResponseWriter, r *http.Reques
 func (s *Server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	assertion, session, err := s.passkeys.BeginDiscoverableLogin()
 	if err != nil {
-		http.Error(w, "passkey sign-in unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	payload, err := json.Marshal(session)
 	if err != nil {
-		http.Error(w, "passkey sign-in unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	token, err := s.store.CreateAuthChallenge(r.Context(), "login", nil, payload, 5*time.Minute)
 	if err != nil {
-		http.Error(w, "passkey sign-in unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	writeJSON(w, map[string]any{"options": assertion, "challengeToken": token})
@@ -156,12 +156,12 @@ func (s *Server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "login")
 	if err != nil {
-		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey sign-in could not be completed.")
 		return
 	}
 	var session webauthn.SessionData
 	if err = json.Unmarshal(challenge.Payload, &session); err != nil {
-		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey sign-in could not be completed.")
 		return
 	}
 	validated, credential, err := s.passkeys.FinishPasskeyLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
@@ -172,20 +172,20 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return user, nil
 	}, session, r)
 	if err != nil {
-		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey sign-in could not be completed.")
 		return
 	}
 	user, ok := validated.(archive.User)
 	if !ok || !user.Active() {
-		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey sign-in could not be completed.")
 		return
 	}
 	if err = s.store.UpdatePasskey(r.Context(), user.ID, *credential); err != nil {
-		http.Error(w, "passkey sign-in failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey sign-in could not be completed.")
 		return
 	}
 	if err = s.replaceSession(w, r, user.ID); err != nil {
-		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	writeJSON(w, map[string]any{"redirect": safeNext(r.URL.Query().Get("next"))})
@@ -203,22 +203,22 @@ func (s *Server) passkeyFreshBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
 	if err != nil || len(authUser.Credentials) == 0 {
-		http.Error(w, "passkey verification unavailable", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey verification is unavailable for this account.")
 		return
 	}
 	assertion, session, err := s.passkeys.BeginLogin(authUser)
 	if err != nil {
-		http.Error(w, "passkey verification unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	payload, err := json.Marshal(session)
 	if err != nil {
-		http.Error(w, "passkey verification unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	token, err := s.store.CreateAuthChallenge(r.Context(), "fresh", &user.ID, payload, 5*time.Minute)
 	if err != nil {
-		http.Error(w, "passkey verification unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	writeJSON(w, map[string]any{"options": assertion, "challengeToken": token})
@@ -234,32 +234,32 @@ func (s *Server) passkeyAddBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The passkey request could not be read.")
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > 64 {
-		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey name must be between 1 and 64 characters.")
 		return
 	}
 	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration is unavailable for this account.")
 		return
 	}
 	creation, session, err := s.passkeys.BeginRegistration(authUser)
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	payload, err := json.Marshal(passkeyRegistrationState{Session: *session, Name: input.Name, UserID: user.ID})
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	token, err := s.store.CreateAuthChallenge(r.Context(), "add", &user.ID, payload, 5*time.Minute)
 	if err != nil {
-		http.Error(w, "passkey registration unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	writeJSON(w, map[string]any{"options": creation, "challengeToken": token})
@@ -272,38 +272,38 @@ func (s *Server) passkeyAddFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "add")
 	if err != nil || challenge.UserID == nil || *challenge.UserID != user.ID {
-		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
 	var state passkeyRegistrationState
 	if err = json.Unmarshal(challenge.Payload, &state); err != nil || state.UserID != user.ID {
-		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
 	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
 	credential, err := s.passkeys.FinishRegistration(authUser, state.Session, r)
 	if err != nil {
-		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
 	if _, err = s.store.AddPasskey(r.Context(), *user, state.Name, *credential); err != nil {
-		http.Error(w, "passkey registration failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
 	status, err := s.store.SecurityStatus(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "account security unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	recovery := ""
 	if !status.RecoveryCodeActive {
 		recovery, err = s.store.ReplaceRecoveryCode(r.Context(), *user)
 		if err != nil {
-			http.Error(w, "recovery code unavailable", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 	}
@@ -317,26 +317,26 @@ func (s *Server) passkeyFreshFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "fresh")
 	if err != nil || challenge.UserID == nil || *challenge.UserID != user.ID {
-		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey verification could not be completed.")
 		return
 	}
 	var session webauthn.SessionData
 	if err = json.Unmarshal(challenge.Payload, &session); err != nil {
-		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey verification could not be completed.")
 		return
 	}
 	authUser, err := s.store.WebAuthnUser(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey verification could not be completed.")
 		return
 	}
 	credential, err := s.passkeys.FinishLogin(authUser, session, r)
 	if err != nil || s.store.UpdatePasskey(r.Context(), user.ID, *credential) != nil {
-		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey verification could not be completed.")
 		return
 	}
 	if err = s.store.MarkSessionPasskeyVerified(r.Context(), currentSession(r).Token, user.ID); err != nil {
-		http.Error(w, "passkey verification failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey verification could not be completed.")
 		return
 	}
 	writeJSON(w, map[string]any{"verified": true})
@@ -349,11 +349,11 @@ func (s *Server) passkeyRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	if err = s.store.RemovePasskey(r.Context(), *user, id); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The passkey could not be removed.")
 		return
 	}
 	if isHTMX(r) {

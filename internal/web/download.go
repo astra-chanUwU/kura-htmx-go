@@ -99,7 +99,7 @@ func downloadFilename(post archive.Post, mode string) string {
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	id, err := postID(r)
 	if err != nil {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	var post archive.Post
@@ -109,38 +109,38 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		post, err = s.store.PostForUser(r.Context(), id, user.ID, user.CanUpload())
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		writeProtocolError(w, http.StatusInternalServerError, "download unavailable")
 		return
 	}
 	rel := filepath.FromSlash(post.OriginalPath)
 	if filepath.IsAbs(rel) || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	root, err := filepath.Abs(s.mediaRoot)
 	if err != nil {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	path := filepath.Join(root, rel)
 	relative, err := filepath.Rel(root, path)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		http.NotFound(w, r)
+		writeProtocolError(w, http.StatusNotFound, "not found")
 		return
 	}
 	mode := r.URL.Query().Get("name")

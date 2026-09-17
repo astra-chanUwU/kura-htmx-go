@@ -293,7 +293,7 @@ func exportError(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return
 	}
-	http.Error(w, message, status)
+	writeProtocolError(w, status, message)
 }
 
 func (s *Server) serveExport(w http.ResponseWriter, r *http.Request, plan archive.ExportPlan, mode string) {

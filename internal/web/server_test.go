@@ -311,7 +311,7 @@ func TestPasswordLoginRateLimitUsesGenericFailure(t *testing.T) {
 		}
 	}
 	blocked := sessionRequest(t, handler, "POST", "/login", url.Values{"username": {"rate-user"}, "password": {"correct rate password"}}, session)
-	if blocked.Code != http.StatusTooManyRequests || !strings.Contains(blocked.Body.String(), archive.ErrInvalidLogin.Error()) {
+	if blocked.Code != http.StatusTooManyRequests || !strings.Contains(blocked.Body.String(), "Too many attempts") {
 		t.Fatalf("rate limit response was not generic: status=%d body=%s", blocked.Code, blocked.Body.String())
 	}
 }

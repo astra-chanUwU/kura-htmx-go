@@ -1,0 +1,1 @@
+{{define "error"}}{{template "head" .}}{{template "nav" .}}<main id="main" class="error-page narrow" aria-labelledby="error-title"><p class="error-code">{{.ErrorStatus}}</p><h1 id="error-title">{{.ErrorHeading}}</h1><p class="lede">{{.Error}}</p><p><a class="button" href="/">Return to Kura</a> <a class="button" href="/posts">Browse posts</a></p></main>{{template "foot" .}}{{end}}

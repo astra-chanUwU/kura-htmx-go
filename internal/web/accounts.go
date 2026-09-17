@@ -22,11 +22,11 @@ func (s *Server) registerForm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	user, err := s.store.Register(r.Context(), r.FormValue("username"), r.FormValue("password"))
 	if err != nil {
-		s.render(w, r, "auth", viewData{Title: "Register — Kura", ActiveNav: "account", Error: err.Error(), Next: "/account"})
+		s.render(w, r, "auth", viewData{Title: "Register — Kura", ActiveNav: "account", Error: "The registration details could not be accepted.", Next: "/account"})
 		return
 	}
 	if err = s.replaceSession(w, r, user.ID); err != nil {
-		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
@@ -39,11 +39,11 @@ func (s *Server) removePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	fresh, err := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
 	if err != nil || !fresh {
-		http.Error(w, "fresh passkey verification required", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "Fresh passkey verification is required for this action.")
 		return
 	}
 	if err = s.store.RemovePassword(r.Context(), *user, currentSession(r).Token, r.FormValue("confirmation")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Password could not be removed.")
 		return
 	}
 	http.Redirect(w, r, "/account?notice=password-removed", http.StatusSeeOther)
@@ -56,12 +56,12 @@ func (s *Server) replaceRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	}
 	fresh, err := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
 	if err != nil || !fresh {
-		http.Error(w, "fresh passkey verification required", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "Fresh passkey verification is required for this action.")
 		return
 	}
 	code, err := s.store.ReplaceRecoveryCode(r.Context(), *user)
 	if err != nil {
-		http.Error(w, "recovery code unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "recovery", viewData{Title: "Recovery code replaced — Kura", ActiveNav: "account", User: user, RecoveryCode: code})
@@ -73,7 +73,7 @@ func (s *Server) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.RevokeOtherSessions(r.Context(), *user, currentSession(r).Token); err != nil {
-		http.Error(w, "sessions could not be revoked", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	http.Redirect(w, r, "/account?notice=sessions-revoked", http.StatusSeeOther)
@@ -86,27 +86,27 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	status, err := s.store.SecurityStatus(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "account security unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	if status.PasswordEnabled {
 		if _, err = s.store.Authenticate(r.Context(), user.Username, r.FormValue("current_password")); err != nil {
-			http.Error(w, archive.ErrInvalidLogin.Error(), http.StatusForbidden)
+			s.respondError(w, r, http.StatusForbidden, "The current password was not accepted.")
 			return
 		}
 	} else {
 		fresh, freshErr := s.store.SessionHasFreshPasskey(r.Context(), currentSession(r).Token, 5*time.Minute)
 		if freshErr != nil || !fresh {
-			http.Error(w, "fresh passkey verification required", http.StatusForbidden)
+			s.respondError(w, r, http.StatusForbidden, "Fresh passkey verification is required for this action.")
 			return
 		}
 	}
 	if err = s.store.SetPassword(r.Context(), *user, r.FormValue("password")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Password could not be changed.")
 		return
 	}
 	if err = s.store.RevokeOtherSessions(r.Context(), *user, currentSession(r).Token); err != nil {
-		http.Error(w, "sessions could not be revoked", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	http.Redirect(w, r, "/account?notice=password-updated", http.StatusSeeOther)
@@ -130,8 +130,7 @@ func safeNext(raw string) string {
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	key := authenticationRateKey(r, r.FormValue("username"))
 	if !s.loginLimiter.Allow(key) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, r, "auth", viewData{Title: "Sign in — Kura", ActiveNav: "account", Error: archive.ErrInvalidLogin.Error(), Next: safeNext(r.FormValue("next"))})
+		s.respondFormError(w, r, "auth", http.StatusTooManyRequests, viewData{Title: "Sign in — Kura", ActiveNav: "account", Error: "Too many attempts. Please wait a moment before trying again.", Next: safeNext(r.FormValue("next"))})
 		return
 	}
 	user, err := s.store.Authenticate(r.Context(), r.FormValue("username"), r.FormValue("password"))
@@ -141,7 +140,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.loginLimiter.Reset(key)
 	if err = s.replaceSession(w, r, user.ID); err != nil {
-		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
@@ -166,22 +165,21 @@ func (s *Server) recoveryForm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) recoverAccount(w http.ResponseWriter, r *http.Request) {
 	key := authenticationRateKey(r, r.FormValue("username"))
 	if !s.recoveryLimiter.Allow(key) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, r, "recovery", viewData{Title: "Recover account — Kura", ActiveNav: "account", Error: archive.ErrInvalidRecovery.Error()})
+		s.respondFormError(w, r, "recovery", http.StatusTooManyRequests, viewData{Title: "Recover account — Kura", ActiveNav: "account", Error: "Too many attempts. Please wait a moment before trying again."})
 		return
 	}
 	user, replacement, err := s.store.RecoverPassword(r.Context(), r.FormValue("username"), r.FormValue("recovery_code"), r.FormValue("password"))
 	if err != nil {
 		errorMessage := archive.ErrInvalidRecovery.Error()
 		if !errors.Is(err, archive.ErrInvalidRecovery) {
-			errorMessage = err.Error()
+			errorMessage = "The recovery details could not be accepted."
 		}
 		s.render(w, r, "recovery", viewData{Title: "Recover account — Kura", ActiveNav: "account", Error: errorMessage})
 		return
 	}
 	s.recoveryLimiter.Reset(key)
 	if err = s.replaceSession(w, r, user.ID); err != nil {
-		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "recovery", viewData{Title: "Recovery complete — Kura", ActiveNav: "account", User: &user, RecoveryCode: replacement})
@@ -196,45 +194,45 @@ func (s *Server) recoverPasskeyBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, archive.ErrInvalidRecovery.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The recovery details could not be accepted.")
 		return
 	}
 	key := authenticationRateKey(r, input.Username)
 	if !s.recoveryLimiter.Allow(key) {
-		http.Error(w, archive.ErrInvalidRecovery.Error(), http.StatusTooManyRequests)
+		s.respondError(w, r, http.StatusTooManyRequests, "")
 		return
 	}
 	user, recoveryHash, err := s.store.VerifyRecoveryCode(r.Context(), input.Username, input.RecoveryCode)
 	if err != nil {
-		http.Error(w, archive.ErrInvalidRecovery.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The recovery details could not be accepted.")
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > 64 {
-		http.Error(w, "passkey name must be between 1 and 64 characters", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey name must be between 1 and 64 characters.")
 		return
 	}
 	passwordHash := ""
 	if input.Password != "" {
 		passwordHash, err = archive.PreparePassword(input.Password)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.respondError(w, r, http.StatusBadRequest, "The password could not be prepared.")
 			return
 		}
 	}
 	creation, session, err := s.passkeys.BeginRegistration(user)
 	if err != nil {
-		http.Error(w, "passkey recovery unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	payload, err := json.Marshal(passkeyRegistrationState{Session: *session, Name: input.Name, UserID: user.ID, PasswordHash: passwordHash, RecoveryHash: recoveryHash})
 	if err != nil {
-		http.Error(w, "passkey recovery unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	challenge, err := s.store.CreateAuthChallenge(r.Context(), "recover-passkey", &user.ID, payload, 5*time.Minute)
 	if err != nil {
-		http.Error(w, "passkey recovery unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.recoveryLimiter.Reset(key)
@@ -244,31 +242,31 @@ func (s *Server) recoverPasskeyBegin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) recoverPasskeyFinish(w http.ResponseWriter, r *http.Request) {
 	challenge, err := s.store.ConsumeAuthChallenge(r.Context(), r.Header.Get("X-Kura-Challenge"), "recover-passkey")
 	if err != nil || challenge.UserID == nil {
-		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey recovery could not be completed.")
 		return
 	}
 	var state passkeyRegistrationState
 	if err = json.Unmarshal(challenge.Payload, &state); err != nil || state.UserID != *challenge.UserID {
-		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey recovery could not be completed.")
 		return
 	}
 	user, err := s.store.WebAuthnUser(r.Context(), state.UserID)
 	if err != nil {
-		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey recovery could not be completed.")
 		return
 	}
 	credential, err := s.passkeys.FinishRegistration(user, state.Session, r)
 	if err != nil {
-		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey recovery could not be completed.")
 		return
 	}
 	replacement, err := s.store.CompletePasskeyRecovery(r.Context(), user.ID, state.RecoveryHash, state.Name, *credential, state.PasswordHash)
 	if err != nil {
-		http.Error(w, "passkey recovery failed", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "Passkey recovery could not be completed.")
 		return
 	}
 	if err = s.replaceSession(w, r, user.ID); err != nil {
-		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	writeJSON(w, map[string]any{"redirect": "/account", "recoveryCode": replacement})
@@ -297,12 +295,12 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	}
 	posts, err := s.store.Favorites(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "account unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	pools, err := s.store.PoolsForUser(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "account unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	owned := pools[:0]
@@ -313,7 +311,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request) {
 	}
 	security, err := s.store.SecurityStatus(r.Context(), user.ID)
 	if err != nil {
-		http.Error(w, "account unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "account", viewData{Title: user.Username + " — Kura", ActiveNav: "account", Posts: posts, Pools: owned, Security: security, Notice: r.URL.Query().Get("notice")})

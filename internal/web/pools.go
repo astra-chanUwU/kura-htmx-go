@@ -21,7 +21,7 @@ func viewerID(r *http.Request) int64 {
 func (s *Server) pools(w http.ResponseWriter, r *http.Request) {
 	pools, err := s.store.PoolsForUser(r.Context(), viewerID(r))
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "pools", viewData{Title: "Pools — Kura", ActiveNav: "pools", Pools: pools})
@@ -30,11 +30,11 @@ func (s *Server) pools(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pool(w http.ResponseWriter, r *http.Request) {
 	pool, err := s.store.Pool(r.Context(), r.PathValue("slug"), viewerID(r))
 	if err == sql.ErrNoRows {
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	var exportBytes int64
@@ -50,7 +50,7 @@ func (s *Server) newPool(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := s.poolEditorData(r, archive.Pool{Status: "draft"}, "")
 	if err != nil {
-		http.Error(w, "posts unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	data.Title, data.ActiveNav = "New pool — Kura", "pools"
@@ -66,10 +66,10 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		data, loadErr := s.poolEditorData(r, archive.Pool{Name: r.FormValue("name"), Description: r.FormValue("description"), Status: r.FormValue("status")}, r.FormValue("post_ids"))
 		if loadErr != nil {
-			http.Error(w, "posts unavailable", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
-		data.Title, data.ActiveNav, data.Error = "New pool — Kura", "pools", err.Error()
+		data.Title, data.ActiveNav, data.Error = "New pool — Kura", "pools", "The pool details could not be accepted."
 		s.render(w, r, "pool-edit", data)
 		return
 	}
@@ -83,12 +83,12 @@ func (s *Server) editPool(w http.ResponseWriter, r *http.Request) {
 	}
 	pool, err := s.store.Pool(r.Context(), r.PathValue("slug"), user.ID)
 	if err != nil || pool.OwnerID != user.ID {
-		http.Error(w, "only the pool owner may edit it", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "This pool is not available for editing by this account.")
 		return
 	}
 	data, err := s.poolEditorData(r, pool, pool.PostIDs())
 	if err != nil {
-		http.Error(w, "posts unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	data.Title, data.ActiveNav = "Edit "+pool.Name+" — Kura", "pools"
@@ -102,7 +102,7 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.store.UpdatePool(r.Context(), *user, r.PathValue("slug"), r.FormValue("name"), r.FormValue("description"), r.FormValue("status"), r.FormValue("post_ids"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The pool could not be updated.")
 		return
 	}
 	http.Redirect(w, r, "/pools/"+r.PathValue("slug"), http.StatusSeeOther)
@@ -150,11 +150,11 @@ func (s *Server) poolPicker(w http.ResponseWriter, r *http.Request) {
 			s.render(w, r, "pool-picker", viewData{Page: archive.PostPage{}, Selected: selectedPostIDs(query.Get("post_ids")), Source: "pool"})
 			return
 		}
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	if err != nil {
-		http.Error(w, "posts unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "pool-picker", viewData{Page: page, Selected: selectedPostIDs(query.Get("post_ids")), Source: query.Get("source"), PoolSlug: query.Get("pool")})
@@ -174,18 +174,18 @@ func (s *Server) addPostToPool(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, archive.ErrPermission) {
 			status = http.StatusForbidden
 		}
-		http.Error(w, "post could not be added to that pool", status)
+		s.respondError(w, r, status, "The post could not be added to that pool.")
 		return
 	}
 	if isHTMX(r) {
 		post, err := s.visiblePost(r)
 		if err != nil {
-			http.Error(w, "pool action could not be refreshed", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 		pools, err := s.store.OwnedPoolsForPost(r.Context(), user.ID, id)
 		if err != nil {
-			http.Error(w, "pools unavailable", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 		s.render(w, r, "pool-control", viewData{Post: post, Pools: pools})

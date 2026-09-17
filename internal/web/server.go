@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -41,6 +42,8 @@ type Server struct {
 
 type viewData struct {
 	Title, ActiveNav, Query, Error, Notice, Next, Status string
+	ErrorHeading                                         string
+	ErrorStatus                                          int
 	RecoveryCode                                         string
 	SetupToken                                           string
 	Source, PoolSlug                                     string
@@ -256,7 +259,7 @@ func (s *Server) withSession(next http.Handler) http.Handler {
 			}
 			session, err = s.store.NewSession(r.Context(), nil)
 			if err != nil {
-				http.Error(w, "session unavailable", http.StatusInternalServerError)
+				s.respondError(w, r, http.StatusInternalServerError, "")
 				return
 			}
 			s.setSessionCookie(w, r, session)
@@ -281,7 +284,7 @@ func (s *Server) withCSRF(next http.Handler) http.Handler {
 				got = r.FormValue("csrf")
 			}
 			if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
-				http.Error(w, "invalid CSRF token", http.StatusForbidden)
+				s.respondError(w, r, http.StatusForbidden, "This form could not be verified. Please try again.")
 				return
 			}
 		}
@@ -306,10 +309,17 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		data.User = session.User
 	}
 	data.CSRF = session.CSRF
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
+	var body bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&body, name, data); err != nil {
+		if name == "error" {
+			writeProtocolError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		s.respondError(w, r, http.StatusInternalServerError, "")
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(body.Bytes())
 }
 
 func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) *archive.User {
@@ -324,7 +334,7 @@ func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) *archive.Us
 func (s *Server) requireModerator(w http.ResponseWriter, r *http.Request) *archive.User {
 	user := s.requireUser(w, r)
 	if user != nil && !user.CanUpload() {
-		http.Error(w, "moderator access required", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "")
 		return nil
 	}
 	return user
@@ -333,7 +343,7 @@ func (s *Server) requireModerator(w http.ResponseWriter, r *http.Request) *archi
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) *archive.User {
 	user := s.requireUser(w, r)
 	if user != nil && !user.CanAdminister() {
-		http.Error(w, "admin access required", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "")
 		return nil
 	}
 	return user
@@ -342,7 +352,7 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) *archive.U
 func (s *Server) requireSuperAdmin(w http.ResponseWriter, r *http.Request) *archive.User {
 	user := s.requireUser(w, r)
 	if user != nil && !user.IsSuperAdmin {
-		http.Error(w, "super admin access required", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "")
 		return nil
 	}
 	return user

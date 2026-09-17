@@ -38,16 +38,16 @@ func bulkSource(raw string) string {
 	return "/posts?" + parsed.RawQuery
 }
 
-func bulkTagFailure(w http.ResponseWriter, err error) {
+func (s *Server) bulkTagFailure(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, archive.ErrPermission):
-		http.Error(w, "moderator access required", http.StatusForbidden)
+		s.respondError(w, r, http.StatusForbidden, "")
 	case errors.Is(err, sql.ErrNoRows):
-		http.Error(w, "one or more selected posts are unavailable", http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "One or more selected posts are unavailable.")
 	case errors.Is(err, archive.ErrBulkSelectionLimit), errors.Is(err, archive.ErrTagCategoryConflict):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The bulk tag change could not be applied.")
 	default:
-		http.Error(w, "bulk tag operation unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 	}
 }
 
@@ -60,7 +60,7 @@ func (s *Server) previewBulkTags(w http.ResponseWriter, r *http.Request) {
 	removeTags := r.FormValue("remove_tags")
 	preview, err := s.store.PreviewBulkTagDelta(r.Context(), *user, bulkPostIDs(r), addTags, removeTags)
 	if err != nil {
-		bulkTagFailure(w, err)
+		s.bulkTagFailure(w, r, err)
 		return
 	}
 	s.render(w, r, "bulk-tags-preview", viewData{
@@ -75,7 +75,7 @@ func (s *Server) applyBulkTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.ApplyBulkTagDelta(r.Context(), *user, bulkPostIDs(r), r.FormValue("add_tags"), r.FormValue("remove_tags")); err != nil {
-		bulkTagFailure(w, err)
+		s.bulkTagFailure(w, r, err)
 		return
 	}
 	if isHTMX(r) {

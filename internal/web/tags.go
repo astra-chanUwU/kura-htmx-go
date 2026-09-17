@@ -15,10 +15,10 @@ func (s *Server) tagSuggestions(w http.ResponseWriter, r *http.Request) {
 	tags, err := s.store.TagSuggestions(r.Context(), *user, r.URL.Query().Get("q"))
 	if err != nil {
 		if errors.Is(err, archive.ErrPermission) {
-			http.Error(w, "moderator access required", http.StatusForbidden)
+			s.respondError(w, r, http.StatusForbidden, "")
 			return
 		}
-		http.Error(w, "tag suggestions unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "tag-suggestions", viewData{Tags: tags})

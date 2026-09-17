@@ -22,12 +22,12 @@ func (s *Server) adminImages(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.store.ListPostsForAdmin(r.Context(), archive.AdminPostFilter{Status: status, UploaderID: uploaderID, Page: pageNumber(r), PerPage: 24})
 	if err != nil {
-		http.Error(w, "images unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	users, err := s.store.Users(r.Context())
 	if err != nil {
-		http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "admin-images", viewData{Title: "Images — Kura", ActiveNav: "admin-images", Page: page, Status: status, Users: users, UploaderID: uploaderID})
@@ -39,7 +39,7 @@ func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.store.Users(r.Context())
 	if err != nil {
-		http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "admin", viewData{Title: "Accounts — Kura", ActiveNav: "admin", Users: users})
@@ -89,18 +89,18 @@ func (s *Server) adminResult(w http.ResponseWriter, r *http.Request, err error) 
 		if errors.Is(err, archive.ErrPermission) {
 			status = http.StatusForbidden
 		}
-		http.Error(w, err.Error(), status)
+		s.respondError(w, r, status, "The account change could not be applied.")
 		return
 	}
 	if isHTMX(r) {
 		users, err := s.store.Users(r.Context())
 		if err != nil {
-			http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 		actor, err := s.store.User(r.Context(), currentUser(r).ID)
 		if err != nil {
-			http.Error(w, "account unavailable", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 		s.render(w, r, "admin-account-list", viewData{Users: users, User: &actor})

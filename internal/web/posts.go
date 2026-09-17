@@ -47,7 +47,7 @@ func (s *Server) browseData(r *http.Request) (viewData, error) {
 func (s *Server) posts(w http.ResponseWriter, r *http.Request) {
 	data, err := s.browseData(r)
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "posts", data)
@@ -56,7 +56,7 @@ func (s *Server) posts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) grid(w http.ResponseWriter, r *http.Request) {
 	data, err := s.browseData(r)
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	s.render(w, r, "browse-fragment", data)
@@ -81,18 +81,18 @@ func (s *Server) visiblePost(r *http.Request) (archive.Post, error) {
 func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 	p, err := s.visiblePost(r)
 	if err == sql.ErrNoRows {
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	var pools []archive.Pool
 	if user := currentUser(r); user != nil && p.Status == "published" {
 		pools, err = s.store.OwnedPoolsForPost(r.Context(), user.ID, p.ID)
 		if err != nil {
-			http.Error(w, "pools unavailable", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 	}
@@ -117,7 +117,7 @@ func (s *Server) editPost(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.visiblePost(r)
 	if err != nil {
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	s.render(w, r, "post-edit", viewData{Title: fmt.Sprintf("Edit post %d — Kura", p.ID), ActiveNav: "posts", Post: p, PostTags: tagsString(p.Tags)})
@@ -130,17 +130,17 @@ func (s *Server) updatePost(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := postID(r)
 	if err != nil {
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	if err = s.store.UpdatePost(r.Context(), *user, id, r.FormValue("source"), r.FormValue("tags"), r.FormValue("status")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.respondError(w, r, http.StatusBadRequest, "The post could not be updated.")
 		return
 	}
 	if isHTMX(r) {
 		post, err := s.visiblePost(r)
 		if err != nil {
-			http.Error(w, "post could not be refreshed", http.StatusInternalServerError)
+			s.respondError(w, r, http.StatusInternalServerError, "")
 			return
 		}
 		s.render(w, r, "quick-edit", viewData{Post: post, PostTags: tagsString(post.Tags), Notice: "Saved."})
@@ -156,15 +156,15 @@ func (s *Server) deletePost(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.visiblePost(r)
 	if err != nil {
-		http.NotFound(w, r)
+		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
 	if err = s.store.SoftDeletePost(r.Context(), *user, p.ID); err != nil {
 		if errors.Is(err, archive.ErrPermission) {
-			http.Error(w, "you may delete only your own uploads", http.StatusForbidden)
+			s.respondError(w, r, http.StatusForbidden, "You may delete only your own uploads.")
 			return
 		}
-		http.Error(w, "post could not be deleted", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	http.Redirect(w, r, "/posts", http.StatusSeeOther)
@@ -177,7 +177,7 @@ func (s *Server) random(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, "archive unavailable", http.StatusInternalServerError)
+		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", id), http.StatusSeeOther)
