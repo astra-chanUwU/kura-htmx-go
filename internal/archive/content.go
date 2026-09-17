@@ -221,6 +221,33 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 	return tx.Commit()
 }
 
+func (s *Store) SetOwnedPostStatus(ctx context.Context, actor User, id int64, status string) error {
+	if status != "draft" && status != "published" {
+		return errors.New("invalid post status")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := s.actorTx(ctx, tx, actor)
+	if err != nil || !current.CanUpload() {
+		return ErrPermission
+	}
+	var uploaderID sql.NullInt64
+	if err = tx.QueryRowContext(ctx, `SELECT uploader_id FROM posts WHERE id=? AND deleted_at IS NULL`, id).Scan(&uploaderID); err != nil {
+		return err
+	}
+	if !uploaderID.Valid || uploaderID.Int64 != current.ID {
+		return ErrPermission
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err = tx.ExecContext(ctx, `UPDATE posts SET status=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=? AND deleted_at IS NULL`, status, status, now, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SoftDeletePost(ctx context.Context, actor User, id int64) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {

@@ -59,6 +59,12 @@ type AdminPostFilter struct {
 	PerPage    int
 }
 
+type UploaderPostFilter struct {
+	Status  string
+	Page    int
+	PerPage int
+}
+
 type PoolCandidateFilter struct {
 	Source   string
 	PoolSlug string
@@ -256,6 +262,55 @@ func (s *Store) ListPostsForAdmin(ctx context.Context, filter AdminPostFilter) (
 	for rows.Next() {
 		var p Post
 		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &p.UploaderID, &p.Uploader, &p.DeletedAt); err != nil {
+			return PostPage{}, err
+		}
+		result.Posts = append(result.Posts, p)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ListPostsForUploader(ctx context.Context, actor User, filter UploaderPostFilter) (PostPage, error) {
+	current, err := s.User(ctx, actor.ID)
+	if err != nil || !current.CanUpload() {
+		return PostPage{}, ErrPermission
+	}
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PerPage < 1 || filter.PerPage > 100 {
+		filter.PerPage = 24
+	}
+	status := filter.Status
+	if status != "draft" && status != "published" {
+		status = "all"
+	}
+	where := "p.uploader_id=? AND p.deleted_at IS NULL"
+	args := []any{current.ID}
+	if status != "all" {
+		where += " AND p.status=?"
+		args = append(args, status)
+	}
+	var total int
+	if err = s.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts p WHERE `+where, args...).Scan(&total); err != nil {
+		return PostPage{}, err
+	}
+	pages := (total + filter.PerPage - 1) / filter.PerPage
+	if pages == 0 {
+		pages = 1
+	}
+	if filter.Page > pages {
+		filter.Page = pages
+	}
+	qargs := append(append([]any{}, args...), filter.PerPage, (filter.Page-1)*filter.PerPage)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.original_filename,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE `+where+` ORDER BY p.id DESC LIMIT ? OFFSET ?`, qargs...)
+	if err != nil {
+		return PostPage{}, err
+	}
+	defer rows.Close()
+	result := PostPage{Total: total, Page: filter.Page, PerPage: filter.PerPage, Pages: pages, Query: status}
+	for rows.Next() {
+		var p Post
+		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.OriginalFilename, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &p.UploaderID, &p.Uploader); err != nil {
 			return PostPage{}, err
 		}
 		result.Posts = append(result.Posts, p)

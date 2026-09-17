@@ -64,3 +64,9 @@ The administration area now has a super-admin-only **Images** view at `/admin/im
 The current walkthrough database was checked before implementation: drafts #11 and #16 still belong to `moderator_two` and `moderator_one`, respectively. The view uses SQLite post rows and uploader identities only; it does not scan storage or remove files. Soft-deleted records are shown as `deleted` with “Media retained on disk,” and their media remains unavailable through the existing protected media route. Public browse remains published/non-deleted only, and private draft pools remain owner-only.
 
 The boundary is intentionally super-admin-only: ordinary admins still have account administration but receive `403` for `/admin/images` and do not see its navigation link. Existing upload-capable roles retain their direct draft detail/media access.
+
+## Implemented: My uploads — 2026-09-17
+
+The personal image-management view is available at `/uploads` for active moderators and admins. It is backed by an archive-owned uploader query that reloads the actor's current role and suspension state, then selects only non-deleted posts whose permanent `uploader_id` matches that actor. It provides All, Draft, and Published filters, 24-item pagination, thumbnails, dimensions/type/size and filename metadata, preview/edit links, owner-scoped publish/unpublish controls, and the existing soft-delete ownership rules.
+
+Status changes and deletion have ordinary form/redirect fallbacks and history-neutral HTMX fragment updates. The direct status command preserves source/tags and is authorized to the current owner at the archive boundary; moderators cannot use the personal endpoints to enumerate or mutate another uploader's images. Deleted media is excluded from the personal view and remains protected by the existing media visibility rules. Public browsing and private draft pools remain unchanged, and `/admin/images` remains the separate super-admin server-wide oversight view.
