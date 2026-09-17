@@ -122,6 +122,27 @@ func TestBackupIncludesCommittedWALData(t *testing.T) {
 	}
 }
 
+func TestBackupRejectsDatabaseMissingCurrentMigration(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	db, err := sql.Open("sqlite3", fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`DELETE FROM schema_migrations WHERE version='006_audit_snapshots.sql'`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	archivePath := filepath.Join(t.TempDir(), "missing-migration.zip")
+	err = run([]string{"backup", "-db", fixture.dbPath, "-media", fixture.mediaRoot, "-out", archivePath})
+	if err == nil || !strings.Contains(err.Error(), "schema migration 006") {
+		t.Fatalf("backup error=%v, want missing current migration failure", err)
+	}
+}
+
 func TestVerifyRejectsCorruptChecksum(t *testing.T) {
 	fixture := newMaintenanceFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "backup.zip")
@@ -175,6 +196,36 @@ func TestBackupRejectsUnsafeOutputAndPendingDelete(t *testing.T) {
 	}
 	if err := run([]string{"backup", "-db", fixture.dbPath, "-media", fixture.mediaRoot, "-out", filepath.Join(t.TempDir(), "pending.zip")}); err == nil || !strings.Contains(err.Error(), "ReconcileStagedDeletes") {
 		t.Fatalf("pending delete error=%v", err)
+	}
+}
+
+func TestBackupRejectsMediaReachedThroughSymlinkOutsideRoot(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "original.png"), []byte("outside-original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "thumb.jpg"), []byte("outside-thumb"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(fixture.mediaRoot, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source) VALUES('draft','linked/original.png','linked/thumb.jpg','image/png',1,1,1,'linked-outside','')`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = run([]string{"backup", "-db", fixture.dbPath, "-media", fixture.mediaRoot, "-out", filepath.Join(t.TempDir(), "outside-media.zip")})
+	if err == nil || !strings.Contains(err.Error(), "outside the media root") {
+		t.Fatalf("backup error=%v, want escaped media failure", err)
 	}
 }
 

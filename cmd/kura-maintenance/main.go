@@ -171,7 +171,11 @@ func backup(dbPath, mediaRoot, outPath string) error {
 	entries = append(entries, databaseEntry)
 	for _, rel := range refs {
 		entryPath := mediaPrefix + rel
-		entry, entryErr := fileEntry(entryPath, "media", filepath.Join(mediaRoot, filepath.FromSlash(rel)))
+		sourcePath, pathErr := confinedMediaFile(mediaRoot, rel)
+		if pathErr != nil {
+			return fmt.Errorf("media %s: %w", rel, pathErr)
+		}
+		entry, entryErr := fileEntry(entryPath, "media", sourcePath)
 		if entryErr != nil {
 			return fmt.Errorf("media %s: %w", rel, entryErr)
 		}
@@ -199,7 +203,12 @@ func backup(dbPath, mediaRoot, outPath string) error {
 	for _, entry := range entries {
 		sourcePath := databasePath
 		if entry.Kind == "media" {
-			sourcePath = filepath.Join(mediaRoot, filepath.FromSlash(strings.TrimPrefix(entry.Path, mediaPrefix)))
+			sourcePath, err = confinedMediaFile(mediaRoot, strings.TrimPrefix(entry.Path, mediaPrefix))
+			if err != nil {
+				_ = zipWriter.Close()
+				_ = file.Close()
+				return err
+			}
 		}
 		if err = addFileToZip(zipWriter, entry.Path, sourcePath); err != nil {
 			_ = zipWriter.Close()
@@ -564,9 +573,17 @@ func validateDatabaseConnection(db *sql.DB, requireCurrent bool) error {
 		return err
 	}
 	rows.Close()
-	for i := 1; i <= 5; i++ {
-		if !versions[fmt.Sprintf("%03d_", i)+[]string{"initial", "accounts_permissions", "auth_security", "original_filenames", "quarantine"}[i-1]+".sql"] {
-			return fmt.Errorf("schema migration %03d is not applied", i)
+	required := []string{
+		"001_initial.sql",
+		"002_accounts_permissions.sql",
+		"003_auth_security.sql",
+		"004_original_filenames.sql",
+		"005_quarantine.sql",
+		"006_audit_snapshots.sql",
+	}
+	for _, version := range required {
+		if !versions[version] {
+			return fmt.Errorf("schema migration %s is not applied", strings.TrimSuffix(version, ".sql"))
 		}
 	}
 	return nil
@@ -825,6 +842,21 @@ func safeArchiveMediaPath(raw string) (string, error) {
 		return "", fmt.Errorf("unsafe archive path %q: %w", raw, err)
 	}
 	return raw, nil
+}
+
+func confinedMediaFile(mediaRoot, rel string) (string, error) {
+	root, err := filepath.EvalSymlinks(mediaRoot)
+	if err != nil {
+		return "", err
+	}
+	candidate, err := filepath.EvalSymlinks(filepath.Join(mediaRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", err
+	}
+	if !within(root, candidate) {
+		return "", errors.New("media path resolves outside the media root")
+	}
+	return candidate, nil
 }
 
 func rejectPendingStaging(mediaRoot string) error {
