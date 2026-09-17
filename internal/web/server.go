@@ -144,8 +144,12 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 	if err != nil {
 		return nil, err
 	}
+	ingestor := mediafiles.Ingestor{Root: mediaRoot, Store: store}
+	if err = ingestor.ReconcileStagedDeletes(context.Background()); err != nil {
+		return nil, err
+	}
 	return &Server{
-		store: store, mediaRoot: mediaRoot, media: mediafiles.Ingestor{Root: mediaRoot, Store: store}, templates: t,
+		store: store, mediaRoot: mediaRoot, media: ingestor, templates: t,
 		passkeys: goPasskeys{passkeys}, loginLimiter: newAttemptLimiter(5, time.Minute), recoveryLimiter: newAttemptLimiter(5, 5*time.Minute),
 	}, nil
 }
@@ -231,8 +235,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /uploads", s.uploads)
 	mux.HandleFunc("POST /uploads/{id}/status", s.uploadStatus)
 	mux.HandleFunc("POST /uploads/{id}/delete", s.deleteUpload)
+	mux.HandleFunc("POST /uploads/{id}/permanent-delete", s.permanentDeleteUpload)
 	mux.HandleFunc("GET /admin/accounts", s.adminAccounts)
 	mux.HandleFunc("GET /admin/images", s.adminImages)
+	mux.HandleFunc("GET /admin/images/{id}/review", s.adminImageReview)
+	mux.HandleFunc("POST /admin/images/{id}/quarantine", s.adminQuarantine)
+	mux.HandleFunc("POST /admin/images/{id}/restore", s.adminRestore)
+	mux.HandleFunc("POST /admin/images/{id}/permanent-delete", s.adminPermanentDelete)
 	mux.HandleFunc("POST /admin/accounts/{id}/role", s.adminRole)
 	mux.HandleFunc("POST /admin/accounts/{id}/suspension", s.adminSuspension)
 	mux.HandleFunc("POST /admin/accounts/{id}/transfer", s.adminTransfer)

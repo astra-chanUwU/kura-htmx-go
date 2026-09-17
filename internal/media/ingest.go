@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -30,8 +31,179 @@ const MaxUploadBytes = 32 << 20
 var ErrDuplicate = errors.New("this image is already in Kura")
 
 type Ingestor struct {
-	Root  string
-	Store *archive.Store
+	Root       string
+	Store      *archive.Store
+	deletePost func(context.Context, archive.User, int64) (archive.Post, error)
+}
+
+type deleteManifest struct {
+	PostID        int64  `json:"post_id"`
+	OriginalPath  string `json:"original_path"`
+	ThumbnailPath string `json:"thumbnail_path"`
+}
+
+func (i Ingestor) PermanentlyDelete(ctx context.Context, actor archive.User, id int64) error {
+	post, err := i.Store.PostForDeletion(ctx, actor, id)
+	if err != nil {
+		return err
+	}
+	original, err := i.safePath(post.OriginalPath)
+	if err != nil {
+		return err
+	}
+	thumbnail, err := i.safePath(post.ThumbnailPath)
+	if err != nil {
+		return err
+	}
+	if original == thumbnail {
+		return errors.New("original and thumbnail media paths must differ")
+	}
+	stageRoot := filepath.Join(i.Root, ".deleting")
+	if err = os.MkdirAll(stageRoot, 0700); err != nil {
+		return err
+	}
+	stageDir, err := os.MkdirTemp(stageRoot, fmt.Sprintf("post-%d-", id))
+	if err != nil {
+		return err
+	}
+	_ = os.Chmod(stageDir, 0700)
+	keepStage := false
+	defer func() {
+		if !keepStage {
+			_ = os.RemoveAll(stageDir)
+		}
+	}()
+	manifest := deleteManifest{PostID: id, OriginalPath: post.OriginalPath, ThumbnailPath: post.ThumbnailPath}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	if err = os.WriteFile(filepath.Join(stageDir, "manifest.json"), manifestBytes, 0600); err != nil {
+		return err
+	}
+	staged := []struct {
+		source, name string
+	}{
+		{original, "original"},
+		{thumbnail, "thumbnail"},
+	}
+	for _, item := range staged {
+		if err = os.Rename(item.source, filepath.Join(stageDir, item.name)); err != nil {
+			restoreErr := i.restoreStagedDelete(stageDir, manifest)
+			if restoreErr != nil {
+				keepStage = true
+				return fmt.Errorf("media staging failed: %w; private media restore pending: %v", err, restoreErr)
+			}
+			return err
+		}
+	}
+	deletePost := i.deletePost
+	if deletePost == nil {
+		deletePost = i.Store.PermanentDeletePost
+	}
+	if _, err = deletePost(ctx, actor, id); err != nil {
+		restoreErr := i.restoreStagedDelete(stageDir, manifest)
+		if restoreErr != nil {
+			keepStage = true
+			return fmt.Errorf("permanent deletion failed: %w; private media restore pending: %v", err, restoreErr)
+		}
+		return err
+	}
+	if err = os.RemoveAll(stageDir); err != nil {
+		keepStage = true
+		return fmt.Errorf("permanent deletion committed; private cleanup pending: %w", err)
+	}
+	return nil
+}
+
+func (i Ingestor) safePath(rel string) (string, error) {
+	relPath := filepath.FromSlash(rel)
+	if rel == "" || filepath.IsAbs(rel) || relPath == "." || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+		return "", errors.New("media path is outside the configured media root")
+	}
+	root, err := filepath.Abs(i.Root)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(root, relPath)
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("media path is outside the configured media root")
+	}
+	return path, nil
+}
+
+func (i Ingestor) restoreStagedDelete(stageDir string, manifest deleteManifest) error {
+	original, err := i.safePath(manifest.OriginalPath)
+	if err != nil {
+		return err
+	}
+	thumbnail, err := i.safePath(manifest.ThumbnailPath)
+	if err != nil {
+		return err
+	}
+	for _, item := range []struct{ name, destination string }{{"original", original}, {"thumbnail", thumbnail}} {
+		source := filepath.Join(stageDir, item.name)
+		if _, statErr := os.Stat(source); errors.Is(statErr, os.ErrNotExist) {
+			continue
+		} else if statErr != nil {
+			return statErr
+		}
+		if _, statErr := os.Stat(item.destination); statErr == nil {
+			return fmt.Errorf("cannot restore staged media over existing path %q", item.destination)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		if err = os.MkdirAll(filepath.Dir(item.destination), 0755); err != nil {
+			return err
+		}
+		if err = os.Rename(source, item.destination); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(stageDir)
+}
+
+func (i Ingestor) ReconcileStagedDeletes(ctx context.Context) error {
+	stageRoot := filepath.Join(i.Root, ".deleting")
+	entries, err := os.ReadDir(stageRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		stageDir := filepath.Join(stageRoot, entry.Name())
+		body, readErr := os.ReadFile(filepath.Join(stageDir, "manifest.json"))
+		if readErr != nil {
+			return readErr
+		}
+		var manifest deleteManifest
+		if readErr = json.Unmarshal(body, &manifest); readErr != nil || manifest.PostID < 1 {
+			if readErr == nil {
+				readErr = errors.New("invalid staged delete manifest")
+			}
+			return readErr
+		}
+		var count int
+		if err = i.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts WHERE id=?`, manifest.PostID).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if err = os.RemoveAll(stageDir); err != nil {
+				return err
+			}
+			continue
+		}
+		if err = i.restoreStagedDelete(stageDir, manifest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multipart.FileHeader, actor archive.User, source, tags, status string) (archive.Post, error) {

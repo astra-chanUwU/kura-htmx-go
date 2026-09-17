@@ -40,7 +40,7 @@ func (s *Store) PostNeighbors(ctx context.Context, currentID, viewerID int64, na
 }
 
 func (s *Store) browseNeighbors(ctx context.Context, currentID int64, query string) (PostNavigation, error) {
-	where := `p.status='published' AND p.deleted_at IS NULL`
+	where := `p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL`
 	args := []any{}
 	for _, tag := range normalizeQuery(query) {
 		where += ` AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=?)`
@@ -85,20 +85,20 @@ func (s *Store) poolNeighbors(ctx context.Context, currentID, viewerID int64, sl
 		return PostNavigation{}, err
 	}
 	var position int
-	if err = s.DB.QueryRowContext(ctx, `SELECT pp.position FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND p.id=? AND p.status='published' AND p.deleted_at IS NULL`, poolID, currentID).Scan(&position); errors.Is(err, sql.ErrNoRows) {
+	if err = s.DB.QueryRowContext(ctx, `SELECT pp.position FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND p.id=? AND p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL`, poolID, currentID).Scan(&position); errors.Is(err, sql.ErrNoRows) {
 		return PostNavigation{}, ErrNavigationUnavailable
 	} else if err != nil {
 		return PostNavigation{}, err
 	}
 	var previous int64
-	err = s.DB.QueryRowContext(ctx, `SELECT p.id FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND pp.position<? AND p.status='published' AND p.deleted_at IS NULL ORDER BY pp.position DESC LIMIT 1`, poolID, position).Scan(&previous)
+	err = s.DB.QueryRowContext(ctx, `SELECT p.id FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND pp.position<? AND p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL ORDER BY pp.position DESC LIMIT 1`, poolID, position).Scan(&previous)
 	if errors.Is(err, sql.ErrNoRows) {
 		previous = 0
 	} else if err != nil {
 		return PostNavigation{}, err
 	}
 	var next int64
-	err = s.DB.QueryRowContext(ctx, `SELECT p.id FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND pp.position>? AND p.status='published' AND p.deleted_at IS NULL ORDER BY pp.position ASC LIMIT 1`, poolID, position).Scan(&next)
+	err = s.DB.QueryRowContext(ctx, `SELECT p.id FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND pp.position>? AND p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL ORDER BY pp.position ASC LIMIT 1`, poolID, position).Scan(&next)
 	if errors.Is(err, sql.ErrNoRows) {
 		next = 0
 	} else if err != nil {
@@ -115,7 +115,7 @@ func (s *Store) uploadNeighbors(ctx context.Context, currentID, viewerID int64, 
 	if status != "all" && status != "draft" && status != "published" {
 		return PostNavigation{}, ErrNavigationUnavailable
 	}
-	where := "p.uploader_id=? AND p.deleted_at IS NULL"
+	where := "p.uploader_id=? AND p.deleted_at IS NULL AND p.quarantined_at IS NULL"
 	args := []any{current.ID}
 	if status != "all" {
 		where += " AND p.status=?"
@@ -132,7 +132,7 @@ func (s *Store) adminNeighbors(ctx context.Context, currentID, viewerID int64, s
 	if status != "all" && status != "draft" && status != "published" {
 		return PostNavigation{}, ErrNavigationUnavailable
 	}
-	where := "p.deleted_at IS NULL"
+	where := "p.deleted_at IS NULL AND p.quarantined_at IS NULL"
 	args := []any{}
 	if status != "all" {
 		where += " AND p.status=?"

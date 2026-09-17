@@ -173,7 +173,31 @@ func (s *Server) deletePost(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
-	if err = s.store.SoftDeletePost(r.Context(), *user, p.ID); err != nil {
+	if user.Role == "admin" && p.UploaderID != user.ID {
+		if err = s.store.QuarantinePost(r.Context(), *user, p.ID, r.FormValue("reason")); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, archive.ErrPermission) {
+				status = http.StatusForbidden
+			}
+			s.respondError(w, r, status, "The post could not be quarantined.")
+			return
+		}
+		http.Redirect(w, r, "/posts", http.StatusSeeOther)
+		return
+	}
+	if _, err = s.store.PostForDeletion(r.Context(), *user, p.ID); err != nil {
+		if errors.Is(err, archive.ErrPermission) {
+			s.respondError(w, r, http.StatusForbidden, "You may delete only your own uploads.")
+			return
+		}
+		s.respondError(w, r, http.StatusInternalServerError, "")
+		return
+	}
+	if strings.TrimSpace(r.FormValue("confirmation")) != "DELETE" {
+		s.respondError(w, r, http.StatusBadRequest, "Type DELETE to permanently remove your upload.")
+		return
+	}
+	if err = s.media.PermanentlyDelete(r.Context(), *user, p.ID); err != nil {
 		if errors.Is(err, archive.ErrPermission) {
 			s.respondError(w, r, http.StatusForbidden, "You may delete only your own uploads.")
 			return

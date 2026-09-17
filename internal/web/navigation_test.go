@@ -142,7 +142,7 @@ func TestPostDetailInvalidOrUnauthorizedContextFallsBackToBrowse(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := sessionRequest(t, handler, http.MethodGet, fmt.Sprintf("/posts/%d?context=uploads&status=draft", draft), nil, session)
-	if changed.Code != http.StatusOK || !strings.Contains(changed.Body.String(), `href="/posts"`) || strings.Contains(changed.Body.String(), `context=uploads`) {
-		t.Fatalf("authorization change did not invalidate uploads context: status=%d body=%s", changed.Code, changed.Body.String())
+	if changed.Code != http.StatusNotFound {
+		t.Fatalf("authorization change did not hide quarantined draft: status=%d body=%s", changed.Code, changed.Body.String())
 	}
 }

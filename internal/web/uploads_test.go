@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -148,21 +147,11 @@ func TestUploadsStatusAndDeleteSupportHTMXAndRedirectFallback(t *testing.T) {
 		t.Fatalf("ordinary status change did not persist: status=%q err=%v", status, err)
 	}
 
-	deleteValues := url.Values{"csrf": {session.CSRF}}
-	deleteRequest := httptest.NewRequest(http.MethodPost, "/uploads/"+strconv.FormatInt(ownedID, 10)+"/delete?status=all&page=1", strings.NewReader(deleteValues.Encode()))
-	deleteRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	deleteRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: session.Token})
-	deleteResponse := httptest.NewRecorder()
-	handler.ServeHTTP(deleteResponse, deleteRequest)
-	if deleteResponse.Code != http.StatusSeeOther || deleteResponse.Header().Get("Location") != "/uploads?status=all&page=1" {
-		t.Fatalf("ordinary delete did not redirect to uploads: status=%d location=%q body=%s", deleteResponse.Code, deleteResponse.Header().Get("Location"), deleteResponse.Body.String())
-	}
-	var deleted sql.NullString
-	if err = store.DB.QueryRow(`SELECT deleted_at FROM posts WHERE id=?`, ownedID).Scan(&deleted); err != nil || !deleted.Valid {
-		t.Fatalf("ordinary delete did not use soft deletion: deleted=%v err=%v", deleted, err)
+	if strings.Contains(page.Body.String(), `/uploads/`+strconv.FormatInt(ownedID, 10)+`/delete?`) || !strings.Contains(page.Body.String(), `/uploads/`+strconv.FormatInt(ownedID, 10)+`/permanent-delete`) {
+		t.Fatalf("uploads page exposed legacy soft deletion or omitted permanent deletion: body=%s", page.Body.String())
 	}
 
-	otherDelete := sessionRequest(t, handler, http.MethodPost, "/uploads/"+strconv.FormatInt(otherID, 10)+"/delete", nil, session)
+	otherDelete := sessionRequest(t, handler, http.MethodPost, "/uploads/"+strconv.FormatInt(otherID, 10)+"/permanent-delete", url.Values{"confirmation": {"DELETE"}}, session)
 	if otherDelete.Code != http.StatusForbidden {
 		t.Fatalf("moderator deleted another uploader through uploads: status=%d body=%s", otherDelete.Code, otherDelete.Body.String())
 	}

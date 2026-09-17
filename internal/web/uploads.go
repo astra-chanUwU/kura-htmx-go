@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"kura/internal/archive"
 )
@@ -95,6 +96,10 @@ func (s *Server) uploadStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteUpload(w http.ResponseWriter, r *http.Request) {
+	s.permanentDeleteUpload(w, r)
+}
+
+func (s *Server) permanentDeleteUpload(w http.ResponseWriter, r *http.Request) {
 	actor := s.requireModerator(w, r)
 	if actor == nil {
 		return
@@ -104,8 +109,23 @@ func (s *Server) deleteUpload(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusNotFound, "")
 		return
 	}
-	if err = s.store.SoftDeletePost(r.Context(), *actor, id); err != nil {
-		s.uploadMutationError(w, r, err, "The upload could not be deleted.")
+	post, err := s.store.PostForDeletion(r.Context(), *actor, id)
+	if err != nil {
+		s.uploadMutationError(w, r, err, "The upload could not be permanently deleted.")
+		return
+	}
+	confirmation := strings.TrimSpace(r.FormValue("confirmation"))
+	if actor.IsSuperAdmin && post.UploaderID != actor.ID {
+		if confirmation != strconv.FormatInt(id, 10) {
+			s.respondError(w, r, http.StatusBadRequest, "Type the post ID to permanently delete another user's upload.")
+			return
+		}
+	} else if confirmation != "DELETE" {
+		s.respondError(w, r, http.StatusBadRequest, "Type DELETE to permanently remove this upload.")
+		return
+	}
+	if err = s.media.PermanentlyDelete(r.Context(), *actor, id); err != nil {
+		s.uploadMutationError(w, r, err, "The upload could not be permanently deleted.")
 		return
 	}
 	s.uploadMutationResponse(w, r)

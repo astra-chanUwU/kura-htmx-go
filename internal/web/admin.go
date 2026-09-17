@@ -1,9 +1,11 @@
 package web
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"kura/internal/archive"
 )
@@ -16,10 +18,7 @@ func (s *Server) adminImages(w http.ResponseWriter, r *http.Request) {
 	if uploaderID < 1 {
 		uploaderID = 0
 	}
-	status := r.URL.Query().Get("status")
-	if status != "draft" && status != "published" && status != "deleted" {
-		status = "all"
-	}
+	status := adminImageStatus(r)
 	page, err := s.store.ListPostsForAdmin(r.Context(), archive.AdminPostFilter{Status: status, UploaderID: uploaderID, Page: pageNumber(r), PerPage: 24})
 	if err != nil {
 		s.respondError(w, r, http.StatusInternalServerError, "")
@@ -31,6 +30,97 @@ func (s *Server) adminImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, "admin-images", viewData{Title: "Images — Kura", ActiveNav: "admin-images", Page: page, Status: status, Users: users, UploaderID: uploaderID, PostContext: adminPostContext(status, uploaderID, page.Page)})
+}
+
+func adminImageStatus(r *http.Request) string {
+	status := r.URL.Query().Get("status")
+	if status != "draft" && status != "published" && status != "deleted" && status != "quarantined" {
+		return "all"
+	}
+	return status
+}
+
+func (s *Server) adminImageReview(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireSuperAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err != nil {
+		s.respondError(w, r, http.StatusNotFound, "")
+		return
+	}
+	post, err := s.store.PostForReview(r.Context(), *actor, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.respondError(w, r, http.StatusNotFound, "")
+			return
+		}
+		s.respondError(w, r, http.StatusInternalServerError, "")
+		return
+	}
+	s.render(w, r, "admin-review", viewData{Title: "Review post " + strconv.FormatInt(id, 10) + " — Kura", ActiveNav: "admin-images", Post: post})
+}
+
+func (s *Server) adminQuarantine(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireSuperAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err == nil {
+		err = s.store.QuarantinePost(r.Context(), *actor, id, r.FormValue("reason"))
+	}
+	s.adminImageMutationResult(w, r, err)
+}
+
+func (s *Server) adminRestore(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireSuperAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err == nil {
+		err = s.store.RestorePost(r.Context(), *actor, id)
+	}
+	s.adminImageMutationResult(w, r, err)
+}
+
+func (s *Server) adminPermanentDelete(w http.ResponseWriter, r *http.Request) {
+	actor := s.requireSuperAdmin(w, r)
+	if actor == nil {
+		return
+	}
+	id, err := targetID(r)
+	if err == nil {
+		_, postErr := s.store.PostForDeletion(r.Context(), *actor, id)
+		if postErr != nil {
+			err = postErr
+		} else if strings.TrimSpace(r.FormValue("confirmation")) != strconv.FormatInt(id, 10) {
+			err = errors.New("post ID confirmation is required")
+		} else {
+			err = s.media.PermanentlyDelete(r.Context(), *actor, id)
+		}
+	}
+	s.adminImageMutationResult(w, r, err)
+}
+
+func (s *Server) adminImageMutationResult(w http.ResponseWriter, r *http.Request, err error) {
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, archive.ErrPermission) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		s.respondError(w, r, status, "The image change could not be applied.")
+		return
+	}
+	if isHTMX(r) {
+		s.adminImages(w, r)
+		return
+	}
+	http.Redirect(w, r, "/admin/images?status="+adminImageStatus(r), http.StatusSeeOther)
 }
 
 func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {

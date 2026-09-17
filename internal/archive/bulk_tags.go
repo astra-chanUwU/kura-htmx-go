@@ -149,7 +149,7 @@ func loadBulkTagPosts(ctx context.Context, tx *sql.Tx, ids []int64) ([]Post, err
 	for _, id := range ids {
 		var post Post
 		var uploader sql.NullInt64
-		err := tx.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.original_filename,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL`, id).Scan(&post.ID, &post.Status, &post.OriginalPath, &post.ThumbnailPath, &post.MIMEType, &post.OriginalFilename, &post.Width, &post.Height, &post.ByteSize, &post.SHA256, &post.Source, &post.PublishedAt, &uploader, &post.Uploader)
+		err := tx.QueryRowContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.original_filename,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND p.quarantined_at IS NULL`, id).Scan(&post.ID, &post.Status, &post.OriginalPath, &post.ThumbnailPath, &post.MIMEType, &post.OriginalFilename, &post.Width, &post.Height, &post.ByteSize, &post.SHA256, &post.Source, &post.PublishedAt, &uploader, &post.Uploader)
 		if err != nil {
 			return nil, err
 		}

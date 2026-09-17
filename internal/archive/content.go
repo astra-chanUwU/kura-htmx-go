@@ -191,7 +191,7 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 		return ErrPermission
 	}
 	var exists int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts WHERE id=? AND deleted_at IS NULL)`, id).Scan(&exists); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL)`, id).Scan(&exists); err != nil {
 		return err
 	}
 	if exists == 0 {
@@ -204,7 +204,7 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 	if status == "published" {
 		published = time.Now().UTC().Format(time.RFC3339)
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE posts SET source=?,status=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=? AND deleted_at IS NULL`, strings.TrimSpace(source), status, status, published, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE posts SET source=?,status=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL`, strings.TrimSpace(source), status, status, published, id); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM post_tags WHERE post_id=?`, id); err != nil {
@@ -235,14 +235,14 @@ func (s *Store) SetOwnedPostStatus(ctx context.Context, actor User, id int64, st
 		return ErrPermission
 	}
 	var uploaderID sql.NullInt64
-	if err = tx.QueryRowContext(ctx, `SELECT uploader_id FROM posts WHERE id=? AND deleted_at IS NULL`, id).Scan(&uploaderID); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT uploader_id FROM posts WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL`, id).Scan(&uploaderID); err != nil {
 		return err
 	}
 	if !uploaderID.Valid || uploaderID.Int64 != current.ID {
 		return ErrPermission
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err = tx.ExecContext(ctx, `UPDATE posts SET status=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=? AND deleted_at IS NULL`, status, status, now, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE posts SET status=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL`, status, status, now, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -259,7 +259,7 @@ func (s *Store) SoftDeletePost(ctx context.Context, actor User, id int64) error 
 		return ErrPermission
 	}
 	var uploaderID sql.NullInt64
-	if err = tx.QueryRowContext(ctx, `SELECT uploader_id FROM posts WHERE id=? AND deleted_at IS NULL`, id).Scan(&uploaderID); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT uploader_id FROM posts WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL`, id).Scan(&uploaderID); err != nil {
 		return err
 	}
 	if current.Role != "admin" && (!uploaderID.Valid || uploaderID.Int64 != current.ID) {
@@ -282,7 +282,7 @@ func (s *Store) SetFavorite(ctx context.Context, actor User, postID int64, favor
 		return ErrPermission
 	}
 	if favorite {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO favorites(post_id,user_id) SELECT id,? FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL ON CONFLICT(post_id,user_id) DO NOTHING`, current.ID, postID); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO favorites(post_id,user_id) SELECT id,? FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL AND quarantined_at IS NULL ON CONFLICT(post_id,user_id) DO NOTHING`, current.ID, postID); err != nil {
 			return err
 		}
 	} else if _, err = tx.ExecContext(ctx, `DELETE FROM favorites WHERE user_id=? AND post_id=?`, current.ID, postID); err != nil {
@@ -292,7 +292,7 @@ func (s *Store) SetFavorite(ctx context.Context, actor User, postID int64, favor
 }
 
 func (s *Store) Favorites(ctx context.Context, userID int64) ([]Post, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM posts p JOIN favorites f ON f.post_id=p.id JOIN users u ON u.id=f.user_id WHERE f.user_id=? AND u.suspended_at IS NULL AND p.status='published' AND p.deleted_at IS NULL ORDER BY f.created_at DESC`, userID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM posts p JOIN favorites f ON f.post_id=p.id JOIN users u ON u.id=f.user_id WHERE f.user_id=? AND u.suspended_at IS NULL AND p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL ORDER BY f.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ func (s *Store) AddPostToPool(ctx context.Context, actor User, slug string, post
 		return err
 	}
 	var available int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL)`, postID).Scan(&available); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL AND quarantined_at IS NULL)`, postID).Scan(&available); err != nil {
 		return err
 	}
 	if available == 0 {
@@ -406,7 +406,7 @@ func replacePoolPosts(ctx context.Context, tx *sql.Tx, poolID int64, raw string)
 		}
 		seen[id] = true
 		position++
-		result, err := tx.ExecContext(ctx, `INSERT INTO pool_posts(pool_id,post_id,position) SELECT ?,id,? FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL`, poolID, position, id)
+		result, err := tx.ExecContext(ctx, `INSERT INTO pool_posts(pool_id,post_id,position) SELECT ?,id,? FROM posts WHERE id=? AND status='published' AND deleted_at IS NULL AND quarantined_at IS NULL`, poolID, position, id)
 		if err != nil {
 			return err
 		}
@@ -423,7 +423,7 @@ func (s *Store) Pool(ctx context.Context, slug string, viewerID int64) (Pool, er
 	if err != nil {
 		return pool, err
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND p.status='published' AND p.deleted_at IS NULL ORDER BY pp.position`, pool.ID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? AND p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL ORDER BY pp.position`, pool.ID)
 	if err != nil {
 		return pool, err
 	}

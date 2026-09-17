@@ -65,7 +65,7 @@ func parsePostContext(r *http.Request) postContext {
 		context.Source, context.Status, context.Page = "uploads", status, page
 	case "admin":
 		status := query.Get("status")
-		if status != "all" && status != "draft" && status != "published" && status != "deleted" {
+		if status != "all" && status != "draft" && status != "published" && status != "deleted" && status != "quarantined" {
 			return context
 		}
 		uploaderID, err := parseContextUploader(query.Get("uploader"))

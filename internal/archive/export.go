@@ -59,7 +59,7 @@ func (s *Store) ExportPool(ctx context.Context, viewerID int64, slug string) (Ex
 		return ExportPlan{}, err
 	}
 	source.Type = "pool"
-	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.deleted_at FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? ORDER BY pp.position`, poolID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.deleted_at,p.quarantined_at FROM pool_posts pp JOIN posts p ON p.id=pp.post_id WHERE pp.pool_id=? ORDER BY pp.position`, poolID)
 	if err != nil {
 		return ExportPlan{}, err
 	}
@@ -68,11 +68,11 @@ func (s *Store) ExportPool(ctx context.Context, viewerID int64, slug string) (Ex
 	for rows.Next() {
 		var id int64
 		var status string
-		var deletedAt sql.NullString
-		if err := rows.Scan(&id, &status, &deletedAt); err != nil {
+		var deletedAt, quarantinedAt sql.NullString
+		if err := rows.Scan(&id, &status, &deletedAt, &quarantinedAt); err != nil {
 			return ExportPlan{}, err
 		}
-		if status != "published" || deletedAt.Valid {
+		if status != "published" || deletedAt.Valid || quarantinedAt.Valid {
 			return ExportPlan{}, ErrExportUnavailable
 		}
 		ids = append(ids, id)
