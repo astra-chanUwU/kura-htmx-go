@@ -97,6 +97,15 @@ func (s *Store) ApplyBulkTagDelta(ctx context.Context, actor User, postIDs []int
 				return err
 			}
 		}
+		if post.UploaderID != 0 && post.UploaderID != current.ID {
+			after, loadErr := loadAuditPost(ctx, tx, post.ID)
+			if loadErr != nil {
+				return loadErr
+			}
+			if err = insertPostAuditTx(ctx, tx, current, "bulk_tag_change", post, "bulk tag change", auditSnapshotFromPost(post), auditSnapshotFromPost(after), 0); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }

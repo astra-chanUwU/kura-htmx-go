@@ -190,6 +190,10 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 	if err != nil || !current.CanUpload() {
 		return ErrPermission
 	}
+	beforePost, err := loadAuditPost(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	var exists int
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM posts WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL)`, id).Scan(&exists); err != nil {
 		return err
@@ -215,6 +219,26 @@ func (s *Store) UpdatePost(ctx context.Context, actor User, id int64, source, ta
 	}
 	for _, tag := range parsedTags {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO post_tags(post_id,tag_id) SELECT ?,id FROM tags WHERE name=?`, id, tag.Name); err != nil {
+			return err
+		}
+	}
+	if beforePost.UploaderID != 0 && beforePost.UploaderID != current.ID {
+		afterSnapshot := auditSnapshot{Source: strings.TrimSpace(source), Status: status, PublishedAt: beforePost.PublishedAt}
+		if status == "draft" {
+			afterSnapshot.PublishedAt = ""
+		} else if afterSnapshot.PublishedAt == "" {
+			afterSnapshot.PublishedAt = published.(string)
+		}
+		for _, tag := range parsedTags {
+			afterSnapshot.Tags = append(afterSnapshot.Tags, auditTagSnapshot{Name: tag.Name, Category: tag.Category})
+		}
+		sort.Slice(afterSnapshot.Tags, func(i, j int) bool {
+			if afterSnapshot.Tags[i].Category == afterSnapshot.Tags[j].Category {
+				return afterSnapshot.Tags[i].Name < afterSnapshot.Tags[j].Name
+			}
+			return afterSnapshot.Tags[i].Category < afterSnapshot.Tags[j].Category
+		})
+		if err = insertPostAuditTx(ctx, tx, current, "metadata_change", beforePost, "metadata update", auditSnapshotFromPost(beforePost), afterSnapshot, 0); err != nil {
 			return err
 		}
 	}

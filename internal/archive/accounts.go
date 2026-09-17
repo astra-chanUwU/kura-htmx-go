@@ -317,7 +317,7 @@ func (s *Store) SetUserRole(ctx context.Context, actor User, targetID int64, rol
 			return err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(event_type,actor_id,target_user_id,from_role,to_role,reason,created_at) VALUES('role_change',?,?,?,?,?,?)`, current.ID, targetID, target.Role, role, "role changed", now); err != nil {
+		if err = insertAuditRecordWithRolesTx(ctx, tx, current, "role_change", target.ID, target.Username, 0, target.Role, role, "role changed", "", "", 0); err != nil {
 			return err
 		}
 		rows, queryErr := tx.QueryContext(ctx, `SELECT id FROM posts WHERE uploader_id=? AND status='draft' AND deleted_at IS NULL AND quarantined_at IS NULL`, targetID)
@@ -344,7 +344,7 @@ func (s *Store) SetUserRole(ctx context.Context, actor User, targetID int64, rol
 			if _, err = tx.ExecContext(ctx, `UPDATE posts SET quarantined_at=?,quarantined_by=?,quarantine_reason=?,quarantine_previous_status=status WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL`, now, current.ID, "uploader role demoted to viewer", postID); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(event_type,actor_id,target_user_id,post_id,from_role,to_role,reason,created_at) VALUES('role_change_quarantine',?,?,?,?,?,?,?)`, current.ID, targetID, postID, target.Role, role, "draft quarantined during role change", now); err != nil {
+			if err = insertAuditRecordWithRolesTx(ctx, tx, current, "role_change_quarantine", target.ID, target.Username, postID, target.Role, role, "draft quarantined during role change", "", "", 0); err != nil {
 				return err
 			}
 		}

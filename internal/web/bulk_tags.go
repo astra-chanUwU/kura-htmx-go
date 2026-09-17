@@ -46,6 +46,8 @@ func (s *Server) bulkTagFailure(w http.ResponseWriter, r *http.Request, err erro
 		s.respondError(w, r, http.StatusBadRequest, "One or more selected posts are unavailable.")
 	case errors.Is(err, archive.ErrBulkSelectionLimit), errors.Is(err, archive.ErrTagCategoryConflict):
 		s.respondError(w, r, http.StatusBadRequest, "The bulk tag change could not be applied.")
+	case errors.Is(err, archive.ErrAuditSnapshot):
+		s.respondError(w, r, http.StatusBadRequest, "The bulk tag change could not be recorded safely.")
 	default:
 		s.respondError(w, r, http.StatusInternalServerError, "")
 	}

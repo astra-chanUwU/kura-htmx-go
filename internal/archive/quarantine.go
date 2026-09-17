@@ -100,9 +100,10 @@ func (s *Store) QuarantinePost(ctx context.Context, actor User, id int64, reason
 		return ErrPermission
 	}
 	var uploaderID sql.NullInt64
+	var uploader string
 	var status string
 	var deletedAt, quarantinedAt sql.NullString
-	if err = tx.QueryRowContext(ctx, `SELECT status,uploader_id,deleted_at,quarantined_at FROM posts WHERE id=?`, id).Scan(&status, &uploaderID, &deletedAt, &quarantinedAt); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT p.status,p.uploader_id,COALESCE(u.username,''),p.deleted_at,p.quarantined_at FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=?`, id).Scan(&status, &uploaderID, &uploader, &deletedAt, &quarantinedAt); err != nil {
 		return err
 	}
 	if deletedAt.Valid || quarantinedAt.Valid || (!current.IsSuperAdmin && (!uploaderID.Valid || (uploaderID.Int64 != current.ID && current.Role != "admin"))) {
@@ -113,7 +114,11 @@ func (s *Store) QuarantinePost(ctx context.Context, actor User, id int64, reason
 	if _, err = tx.ExecContext(ctx, `UPDATE posts SET quarantined_at=?,quarantined_by=?,quarantine_reason=?,quarantine_previous_status=? WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NULL`, now, current.ID, reason, status, id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(event_type,actor_id,post_id,reason,created_at) VALUES('quarantine',?,?,?,?)`, current.ID, id, reason, now); err != nil {
+	var targetID int64
+	if uploaderID.Valid {
+		targetID = uploaderID.Int64
+	}
+	if err = insertAuditRecordTx(ctx, tx, current, "quarantine", targetID, uploader, id, reason, "", "", 0); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -129,8 +134,9 @@ func (s *Store) RestorePost(ctx context.Context, actor User, id int64) error {
 	if err != nil || !current.IsSuperAdmin {
 		return ErrPermission
 	}
-	var previous, status string
-	if err = tx.QueryRowContext(ctx, `SELECT status,COALESCE(quarantine_previous_status,'') FROM posts WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NOT NULL`, id).Scan(&status, &previous); err != nil {
+	var previous, status, uploader string
+	var uploaderID sql.NullInt64
+	if err = tx.QueryRowContext(ctx, `SELECT p.status,COALESCE(p.quarantine_previous_status,''),p.uploader_id,COALESCE(u.username,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE p.id=? AND p.deleted_at IS NULL AND p.quarantined_at IS NOT NULL`, id).Scan(&status, &previous, &uploaderID, &uploader); err != nil {
 		return err
 	}
 	if previous != "draft" && previous != "published" {
@@ -143,7 +149,11 @@ func (s *Store) RestorePost(ctx context.Context, actor User, id int64) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE posts SET status=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END,quarantined_at=NULL,quarantined_by=NULL,quarantine_reason='',quarantine_previous_status=NULL WHERE id=? AND deleted_at IS NULL AND quarantined_at IS NOT NULL`, previous, previous, publishedAt, id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_events(event_type,actor_id,post_id,reason,created_at) VALUES('restore',?,?,?,?)`, current.ID, id, "quarantine restored", time.Now().UTC().Format(time.RFC3339)); err != nil {
+	var targetID int64
+	if uploaderID.Valid {
+		targetID = uploaderID.Int64
+	}
+	if err = insertAuditRecordTx(ctx, tx, current, "restore", targetID, uploader, id, "quarantine restored", "", "", 0); err != nil {
 		return err
 	}
 	return tx.Commit()

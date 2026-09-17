@@ -64,6 +64,8 @@ type viewData struct {
 	BulkPreview                                          archive.BulkTagPreview
 	BulkPostIDs, BulkAddTags, BulkRemoveTags             string
 	BulkSource                                           string
+	Audit                                                archive.AuditPage
+	AuditActions                                         []string
 	PostContext                                          postContext
 	BackURL, PreviousURL, NextURL                        string
 	HasPrevious, HasNext                                 bool
@@ -103,6 +105,7 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 			}
 			return tag.Category + ":" + tag.Name
 		},
+		"auditLabel": auditEventLabel,
 		"seq": func(n int) []int {
 			out := make([]int, n)
 			for i := range out {
@@ -238,6 +241,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /uploads/{id}/permanent-delete", s.permanentDeleteUpload)
 	mux.HandleFunc("GET /admin/accounts", s.adminAccounts)
 	mux.HandleFunc("GET /admin/images", s.adminImages)
+	mux.HandleFunc("GET /admin/audit", s.adminAudit)
+	mux.HandleFunc("POST /admin/audit/{id}/revert", s.adminAuditRevert)
 	mux.HandleFunc("GET /admin/images/{id}/review", s.adminImageReview)
 	mux.HandleFunc("POST /admin/images/{id}/quarantine", s.adminQuarantine)
 	mux.HandleFunc("POST /admin/images/{id}/restore", s.adminRestore)
