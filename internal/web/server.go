@@ -40,29 +40,30 @@ type Server struct {
 }
 
 type viewData struct {
-	Title, ActiveNav, Query, Error, Notice, Next string
-	RecoveryCode                                 string
-	SetupToken                                   string
-	Source, PoolSlug                             string
-	Page                                         archive.PostPage
-	Post                                         archive.Post
-	Posts                                        []archive.Post
-	Tags                                         []archive.Tag
-	TagGroups                                    map[string][]archive.Tag
-	Pools                                        []archive.Pool
-	Pool                                         archive.Pool
-	Users                                        []archive.User
-	User                                         *archive.User
-	Security                                     archive.AccountSecurity
-	CSRF                                         string
-	PostTags                                     string
-	PoolPostIDs                                  string
-	Selected                                     map[int64]bool
-	BulkPreview                                  archive.BulkTagPreview
-	BulkPostIDs, BulkAddTags, BulkRemoveTags     string
-	BulkSource                                   string
-	ExportMaxPosts                               int
-	ExportMaxBytes, ExportBytes                  int64
+	Title, ActiveNav, Query, Error, Notice, Next, Status string
+	RecoveryCode                                         string
+	SetupToken                                           string
+	Source, PoolSlug                                     string
+	Page                                                 archive.PostPage
+	Post                                                 archive.Post
+	Posts                                                []archive.Post
+	Tags                                                 []archive.Tag
+	TagGroups                                            map[string][]archive.Tag
+	Pools                                                []archive.Pool
+	Pool                                                 archive.Pool
+	Users                                                []archive.User
+	User                                                 *archive.User
+	Security                                             archive.AccountSecurity
+	CSRF                                                 string
+	PostTags                                             string
+	PoolPostIDs                                          string
+	Selected                                             map[int64]bool
+	BulkPreview                                          archive.BulkTagPreview
+	BulkPostIDs, BulkAddTags, BulkRemoveTags             string
+	BulkSource                                           string
+	ExportMaxPosts                                       int
+	ExportMaxBytes, ExportBytes                          int64
+	UploaderID                                           int64
 }
 
 func New(store *archive.Store, mediaRoot string) (*Server, error) {
@@ -218,6 +219,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /uploads", s.upload)
 	mux.HandleFunc("POST /admin/uploads", s.upload)
 	mux.HandleFunc("GET /admin/accounts", s.adminAccounts)
+	mux.HandleFunc("GET /admin/images", s.adminImages)
 	mux.HandleFunc("POST /admin/accounts/{id}/role", s.adminRole)
 	mux.HandleFunc("POST /admin/accounts/{id}/suspension", s.adminSuspension)
 	mux.HandleFunc("POST /admin/accounts/{id}/transfer", s.adminTransfer)
@@ -332,6 +334,15 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) *archive.U
 	user := s.requireUser(w, r)
 	if user != nil && !user.CanAdminister() {
 		http.Error(w, "admin access required", http.StatusForbidden)
+		return nil
+	}
+	return user
+}
+
+func (s *Server) requireSuperAdmin(w http.ResponseWriter, r *http.Request) *archive.User {
+	user := s.requireUser(w, r)
+	if user != nil && !user.IsSuperAdmin {
+		http.Error(w, "super admin access required", http.StatusForbidden)
 		return nil
 	}
 	return user

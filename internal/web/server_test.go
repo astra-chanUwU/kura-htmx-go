@@ -1161,6 +1161,65 @@ func TestAdminHTMXUpdatesAccountListWithoutNavigation(t *testing.T) {
 	}
 }
 
+func TestAdminImagesIsSuperAdminOnlyAndSupportsFilters(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	root, err := store.BootstrapSuperAdmin(ctx, "images-root", "images root password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.Register(ctx, "images-admin", "images admin password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetUserRole(ctx, root, admin.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	moderator, err := store.Register(ctx, "images-moderator", "images moderator password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertPost := func(hash, status string, uploaderID int64) int64 {
+		t.Helper()
+		result, err := store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,published_at,uploader_id) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?)`, status, "originals/"+hash+".png", "thumbs/"+hash+".jpg", "image/png", 10, 10, 100, hash, uploaderID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	insertPost("images-draft", "draft", moderator.ID)
+	insertPost("images-published", "published", moderator.ID)
+
+	handler := server.Handler()
+	adminSession, _ := store.NewSession(ctx, &admin.ID)
+	denied := sessionRequest(t, handler, "GET", "/admin/images", nil, adminSession)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("ordinary admin oversight status=%d, want 403", denied.Code)
+	}
+	accounts := sessionRequest(t, handler, "GET", "/admin/accounts", nil, adminSession)
+	if accounts.Code != http.StatusOK || strings.Contains(accounts.Body.String(), `href="/admin/images"`) {
+		t.Fatalf("ordinary admin should not see oversight navigation: status=%d body=%s", accounts.Code, accounts.Body.String())
+	}
+
+	rootSession, _ := store.NewSession(ctx, &root.ID)
+	path := "/admin/images?status=draft&uploader=" + strconv.FormatInt(moderator.ID, 10)
+	page := sessionRequest(t, handler, "GET", path, nil, rootSession)
+	body := page.Body.String()
+	if page.Code != http.StatusOK || !strings.Contains(body, "images-draft") || strings.Contains(body, "images-published") || !strings.Contains(body, `/posts/`+strconv.FormatInt(pageIDForHash(t, store, "images-draft"), 10)+`/edit`) || !strings.Contains(body, "images-moderator") {
+		t.Fatalf("filtered oversight page is wrong: status=%d body=%s", page.Code, body)
+	}
+}
+
+func pageIDForHash(t *testing.T, store *archive.Store, hash string) int64 {
+	t.Helper()
+	var id int64
+	if err := store.DB.QueryRow(`SELECT id FROM posts WHERE sha256=?`, hash).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestPoolPickerReturnsFilteredPublishedThumbnails(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()

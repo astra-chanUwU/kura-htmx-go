@@ -8,6 +8,31 @@ import (
 	"kura/internal/archive"
 )
 
+func (s *Server) adminImages(w http.ResponseWriter, r *http.Request) {
+	if s.requireSuperAdmin(w, r) == nil {
+		return
+	}
+	uploaderID, _ := strconv.ParseInt(r.URL.Query().Get("uploader"), 10, 64)
+	if uploaderID < 1 {
+		uploaderID = 0
+	}
+	status := r.URL.Query().Get("status")
+	if status != "draft" && status != "published" && status != "deleted" {
+		status = "all"
+	}
+	page, err := s.store.ListPostsForAdmin(r.Context(), archive.AdminPostFilter{Status: status, UploaderID: uploaderID, Page: pageNumber(r), PerPage: 24})
+	if err != nil {
+		http.Error(w, "images unavailable", http.StatusInternalServerError)
+		return
+	}
+	users, err := s.store.Users(r.Context())
+	if err != nil {
+		http.Error(w, "accounts unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "admin-images", viewData{Title: "Images — Kura", ActiveNav: "admin-images", Page: page, Status: status, Users: users, UploaderID: uploaderID})
+}
+
 func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 	if s.requireAdmin(w, r) == nil {
 		return

@@ -104,3 +104,58 @@ func TestListPostsPaginates(t *testing.T) {
 		t.Fatalf("unexpected page: %+v", page)
 	}
 }
+
+func TestListPostsForAdminFiltersStatusUploaderAndDeleted(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ownerOne, err := s.Register(ctx, "oversight-one", "oversight one password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerTwo, err := s.Register(ctx, "oversight-two", "oversight two password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertAdminPost := func(hash, status string, uploaderID int64, deleted bool) int64 {
+		t.Helper()
+		result, err := s.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,published_at,uploader_id,deleted_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?,?)`, status, "originals/"+hash+".png", "thumbs/"+hash+".jpg", "image/png", 10, 10, 100, hash, uploaderID, func() any {
+			if deleted {
+				return "2026-09-13T00:00:00Z"
+			}
+			return nil
+		}())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+	insertAdminPost("published-one", "published", ownerOne.ID, false)
+	draftID := insertAdminPost("draft-two", "draft", ownerTwo.ID, false)
+	insertAdminPost("published-two", "published", ownerTwo.ID, false)
+	deletedID := insertAdminPost("deleted-one", "published", ownerOne.ID, true)
+
+	page, err := s.ListPostsForAdmin(ctx, AdminPostFilter{Status: "draft", UploaderID: ownerTwo.ID, Page: 1, PerPage: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Posts) != 1 || page.Posts[0].ID != draftID || page.Posts[0].Uploader != ownerTwo.Username || page.Posts[0].DeletedAt != "" {
+		t.Fatalf("unexpected draft oversight results: %+v", page)
+	}
+
+	page, err = s.ListPostsForAdmin(ctx, AdminPostFilter{Status: "deleted", Page: 1, PerPage: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Posts) != 1 || page.Posts[0].ID != deletedID || page.Posts[0].DeletedAt == "" {
+		t.Fatalf("unexpected deleted oversight results: %+v", page)
+	}
+
+	page, err = s.ListPostsForAdmin(ctx, AdminPostFilter{UploaderID: ownerTwo.ID, Page: 1, PerPage: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || page.Pages != 2 || page.Page != 1 || len(page.Posts) != 1 {
+		t.Fatalf("unexpected uploader pagination: %+v", page)
+	}
+}

@@ -22,7 +22,7 @@ type Post struct {
 	Status, OriginalPath, ThumbnailPath, MIMEType, OriginalFilename string
 	Width, Height                                                   int
 	ByteSize                                                        int64
-	SHA256, Source, PublishedAt                                     string
+	SHA256, Source, PublishedAt, DeletedAt                          string
 	UploaderID                                                      int64
 	Uploader                                                        string
 	Favorite                                                        bool
@@ -50,6 +50,13 @@ type PostPage struct {
 	Posts                       []Post
 	Total, Page, PerPage, Pages int
 	Query                       string
+}
+
+type AdminPostFilter struct {
+	Status     string
+	UploaderID int64
+	Page       int
+	PerPage    int
 }
 
 type PoolCandidateFilter struct {
@@ -195,6 +202,60 @@ func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) 
 	for rows.Next() {
 		var p Post
 		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt); err != nil {
+			return PostPage{}, err
+		}
+		result.Posts = append(result.Posts, p)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ListPostsForAdmin(ctx context.Context, filter AdminPostFilter) (PostPage, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PerPage < 1 || filter.PerPage > 100 {
+		filter.PerPage = 24
+	}
+	status := filter.Status
+	if status == "" {
+		status = "all"
+	}
+	where := "1=1"
+	args := []any{}
+	switch status {
+	case "draft", "published":
+		where += " AND p.status=? AND p.deleted_at IS NULL"
+		args = append(args, status)
+	case "deleted":
+		where += " AND p.deleted_at IS NOT NULL"
+	default:
+		status = "all"
+	}
+	if filter.UploaderID > 0 {
+		where += " AND p.uploader_id=?"
+		args = append(args, filter.UploaderID)
+	}
+	var total int
+	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts p WHERE `+where, args...).Scan(&total); err != nil {
+		return PostPage{}, err
+	}
+	pages := (total + filter.PerPage - 1) / filter.PerPage
+	if pages == 0 {
+		pages = 1
+	}
+	if filter.Page > pages {
+		filter.Page = pages
+	}
+	qargs := append(append([]any{}, args...), filter.PerPage, (filter.Page-1)*filter.PerPage)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,''),p.uploader_id,COALESCE(u.username,''),COALESCE(p.deleted_at,'') FROM posts p LEFT JOIN users u ON u.id=p.uploader_id WHERE `+where+` ORDER BY p.id DESC LIMIT ? OFFSET ?`, qargs...)
+	if err != nil {
+		return PostPage{}, err
+	}
+	defer rows.Close()
+	result := PostPage{Total: total, Page: filter.Page, PerPage: filter.PerPage, Pages: pages, Query: status}
+	for rows.Next() {
+		var p Post
+		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt, &p.UploaderID, &p.Uploader, &p.DeletedAt); err != nil {
 			return PostPage{}, err
 		}
 		result.Posts = append(result.Posts, p)
