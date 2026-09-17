@@ -59,17 +59,19 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use one of: backup, verify, restore")
+		return errors.New("use one of: backup, check, verify, restore")
 	}
 	switch args[0] {
 	case "backup":
 		return runBackup(args[1:])
+	case "check":
+		return runCheck(args[1:])
 	case "verify":
 		return runVerify(args[1:])
 	case "restore":
 		return runRestore(args[1:])
 	default:
-		return fmt.Errorf("unknown subcommand %q; use backup, verify, or restore", args[0])
+		return fmt.Errorf("unknown subcommand %q; use backup, check, verify, or restore", args[0])
 	}
 }
 
@@ -573,15 +575,7 @@ func validateDatabaseConnection(db *sql.DB, requireCurrent bool) error {
 		return err
 	}
 	rows.Close()
-	required := []string{
-		"001_initial.sql",
-		"002_accounts_permissions.sql",
-		"003_auth_security.sql",
-		"004_original_filenames.sql",
-		"005_quarantine.sql",
-		"006_audit_snapshots.sql",
-	}
-	for _, version := range required {
+	for _, version := range archive.CurrentMigrationVersions() {
 		if !versions[version] {
 			return fmt.Errorf("schema migration %s is not applied", strings.TrimSuffix(version, ".sql"))
 		}

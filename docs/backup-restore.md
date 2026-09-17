@@ -29,6 +29,38 @@ go run ./cmd/kura-maintenance verify \
   -in "/Volumes/Backup/Kura/kura-backup-YYYYMMDD-HHMMSS.zip"
 ```
 
+## Check a live archive offline
+
+Stop Kura before checking its database and media root. The `check` command is
+strictly read-only: it does not run migrations, repair metadata, or remove,
+rename, or rewrite database/media files. It checks SQLite integrity and foreign
+keys, confirms that every shipped migration is recorded, verifies each post's
+contained original (size and SHA-256) and decodable thumbnail, and reports
+orphan files beneath `originals/` and `thumbs/`. `.incoming` and `.deleting`
+are reported separately as pending staging and are never cleaned up by this
+command.
+
+```sh
+cd /path/to/kura
+go run ./cmd/kura-maintenance check \
+  -db ./var/kura.db \
+  -media ./var/media
+```
+
+A clean archive prints a short report and exits `0`:
+
+```
+CHECK PASS
+posts: 48
+referenced media: 96
+orphan media: 0
+```
+
+Any integrity, path, media, orphan, symlink, or staging finding prints
+`CHECK FAIL` with deterministic `finding:` lines and exits nonzero. Keep the
+output for the operator; this command only diagnoses the archive. Resolve
+findings using the normal Kura workflow, then stop Kura and run the check again.
+
 ## Restore into new paths
 
 Restore only into new destination paths. Do not point it at the live `var/kura.db`, the live `var/media`, an existing workspace, or a directory containing unrelated files. The command fully validates the archive before staging and atomically renames the staged database and media tree into place; it never overwrites or deletes an existing destination.

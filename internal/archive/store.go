@@ -162,6 +162,22 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
+// CurrentMigrationVersions returns the migrations shipped with this archive
+// binary, in application order. Callers that only inspect an archive should
+// use this list to check completeness without running migrations.
+func CurrentMigrationVersions() []string {
+	entries, err := migrations.ReadDir("migrations")
+	if err != nil {
+		return nil
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	versions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		versions = append(versions, entry.Name())
+	}
+	return versions
+}
+
 func normalizeQuery(q string) []string {
 	seen := map[string]bool{}
 	var out []string

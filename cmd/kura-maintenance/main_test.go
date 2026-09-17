@@ -2,8 +2,14 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
@@ -13,6 +19,301 @@ import (
 
 	"kura/internal/archive"
 )
+
+func TestCheckArchiveReportsCleanReadOnlyArchive(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	dbBefore, err := os.ReadFile(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaBefore := snapshotFiles(t, fixture.mediaRoot)
+
+	report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+	if err != nil {
+		t.Fatalf("checkArchive error: %v", err)
+	}
+	if len(report.Findings) != 0 {
+		t.Fatalf("clean archive findings: %+v", report.Findings)
+	}
+	if report.Posts != 1 || report.Referenced != 2 || report.Orphans != 0 {
+		t.Fatalf("unexpected report counts: %+v", report)
+	}
+	dbAfter, err := os.ReadFile(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(dbBefore, dbAfter) {
+		t.Fatal("health check changed source database")
+	}
+	if got := snapshotFiles(t, fixture.mediaRoot); !mapsEqual(mediaBefore, got) {
+		t.Fatalf("health check changed source media: before=%v after=%v", mediaBefore, got)
+	}
+}
+
+func TestDocumentedCLICheck(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	cmd := exec.Command("go", "run", ".", "check", "-db", fixture.dbPath, "-media", fixture.mediaRoot)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go run check: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "CHECK PASS") || !strings.Contains(string(output), "orphan media: 0") {
+		t.Fatalf("unexpected check output: %s", output)
+	}
+	t.Logf("check output:\n%s", output)
+}
+
+func TestDocumentedCLICheckExitsNonzeroForFinding(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	if err := os.WriteFile(filepath.Join(fixture.mediaRoot, "thumbs", "orphan.jpg"), []byte("orphan"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "run", ".", "check", "-db", fixture.dbPath, "-media", fixture.mediaRoot)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("check unexpectedly succeeded:\n%s", output)
+	}
+	if !strings.Contains(string(output), "CHECK FAIL") || !strings.Contains(string(output), "orphan media") {
+		t.Fatalf("unexpected failed check output: %s", output)
+	}
+	t.Logf("failed check output:\n%s", output)
+}
+
+func TestCheckArchiveReportsMissingAndChangedOriginals(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		fixture := newHealthCheckFixture(t)
+		if err := os.Remove(filepath.Join(fixture.mediaRoot, "originals", "one.png")); err != nil {
+			t.Fatal(err)
+		}
+		report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !findingContains(report, "post 1 original", "missing media file") {
+			t.Fatalf("findings=%v", report.Findings)
+		}
+	})
+	t.Run("changed", func(t *testing.T) {
+		fixture := newHealthCheckFixture(t)
+		if err := os.WriteFile(filepath.Join(fixture.mediaRoot, "originals", "one.png"), []byte("changed"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !findingContains(report, "post 1 original", "SHA-256") {
+			t.Fatalf("findings=%v", report.Findings)
+		}
+	})
+}
+
+func TestCheckArchiveReportsUndecodableThumbnail(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	if err := os.WriteFile(filepath.Join(fixture.mediaRoot, "thumbs", "one.png"), []byte("not an image"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !findingContains(report, "post 1 thumbnail", "cannot decode image") {
+		t.Fatalf("findings=%v", report.Findings)
+	}
+}
+
+func TestCheckArchiveReportsOrphanMedia(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	if err := os.WriteFile(filepath.Join(fixture.mediaRoot, "originals", "orphan.png"), []byte("orphan"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Orphans != 1 || !findingContains(report, "orphan media", "originals/orphan.png") {
+		t.Fatalf("findings=%v orphans=%d", report.Findings, report.Orphans)
+	}
+}
+
+func TestCheckArchiveReportsUnsafeSymlinkWithoutFollowingIt(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.png"), []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(fixture.mediaRoot, "originals", "outside")); err != nil {
+		t.Fatal(err)
+	}
+	report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !findingContains(report, "unsafe media symlink", "originals/outside", "outside media root") {
+		t.Fatalf("findings=%v", report.Findings)
+	}
+}
+
+func TestCheckArchiveReportsPrivateStagingSeparately(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	for _, rel := range []string{".incoming/upload.tmp", ".deleting/post-1/manifest.json"} {
+		name := filepath.Join(fixture.mediaRoot, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte("pending"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !findingContains(report, "pending .incoming staging entry", ".incoming/upload.tmp") || !findingContains(report, "pending .deleting staging entry", ".deleting/post-1/manifest.json") {
+		t.Fatalf("findings=%v", report.Findings)
+	}
+}
+
+func TestCheckArchiveReportsMissingMigrationWithoutApplyingIt(t *testing.T) {
+	fixture := newHealthCheckFixture(t)
+	versions := archive.CurrentMigrationVersions()
+	if len(versions) == 0 {
+		t.Fatal("no current migrations")
+	}
+	db, err := sql.Open("sqlite3", fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`DELETE FROM schema_migrations WHERE version=?`, versions[len(versions)-1]); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := checkArchive(fixture.dbPath, fixture.mediaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !findingContains(report, "schema migration", strings.TrimSuffix(versions[len(versions)-1], ".sql")) {
+		t.Fatalf("findings=%v", report.Findings)
+	}
+	after, err := os.ReadFile(fixture.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("health check applied a migration")
+	}
+}
+
+func findingContains(report checkReport, parts ...string) bool {
+	for _, finding := range report.Findings {
+		match := true
+		for _, part := range parts {
+			if !strings.Contains(finding, part) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+type healthCheckFixture struct {
+	dbPath, mediaRoot string
+}
+
+func newHealthCheckFixture(t *testing.T) healthCheckFixture {
+	t.Helper()
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "source.db")
+	mediaRoot := filepath.Join(root, "media")
+	if err := os.MkdirAll(filepath.Join(mediaRoot, "originals"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(mediaRoot, "thumbs"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := pngBytes(t, 3, 2, color.RGBA{R: 0x22, G: 0x66, B: 0xaa, A: 0xff})
+	thumbnail := pngBytes(t, 2, 1, color.RGBA{R: 0xaa, G: 0x66, B: 0x22, A: 0xff})
+	if err := os.WriteFile(filepath.Join(mediaRoot, "originals", "one.png"), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaRoot, "thumbs", "one.png"), thumbnail, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := archive.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	hash := sha256.Sum256(original)
+	if _, err = store.DB.Exec(`INSERT INTO posts(status,original_path,thumbnail_path,mime_type,width,height,byte_size,sha256,source) VALUES('published',?,?,?,?,?,?,?,?)`, "originals/one.png", "thumbs/one.png", "image/png", 3, 2, len(original), hex.EncodeToString(hash[:]), "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	return healthCheckFixture{dbPath: dbPath, mediaRoot: mediaRoot}
+}
+
+func pngBytes(t *testing.T, width, height int, fill color.Color) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, fill)
+		}
+	}
+	var out bytes.Buffer
+	if err := png.Encode(&out, img); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func snapshotFiles(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+	result := map[string][]byte{}
+	err := filepath.Walk(root, func(name string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			body, readErr := os.ReadFile(name)
+			if readErr != nil {
+				return readErr
+			}
+			rel, relErr := filepath.Rel(root, name)
+			if relErr != nil {
+				return relErr
+			}
+			result[filepath.ToSlash(rel)] = body
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func mapsEqual(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name, want := range a {
+		if !bytes.Equal(want, b[name]) {
+			return false
+		}
+	}
+	return true
+}
 
 type maintenanceFixture struct {
 	dbPath, mediaRoot string
