@@ -12,7 +12,9 @@ Kura is a fast, self-hostable image archive: the density and directness of a boo
 
 ## Current vertical slice
 
-The current build includes public browsing/search, local accounts with passwords and/or passkeys, one-use recovery codes, private favorites, owned draft/published pools, moderator uploads and metadata tools with categorized tag entry/autocomplete, account/role administration, individual downloads, and bounded portable ZIP exports. Viewers add images to pools from a post or through a searchable thumbnail picker with visual removal and ordering—database IDs never need to be entered. Uploads are hash-named beneath the configured media root, retain only the upload basename as metadata, thumbnails are generated during the request, and duplicate files are rejected before metadata is created. Published or otherwise authorized posts can be downloaded with either a readable tagged filename or a safe original-basename filename; selected visible browse results and authorized pools can be exported with original JPEG, PNG, or GIF bytes plus a complete `manifest.json`. Deleting a post hides its metadata but deliberately retains its files for explicit maintenance.
+The current build includes public browsing/search, contextual previous/next navigation, local accounts with passwords and/or passkeys, one-use recovery codes, private favorites, owned draft/published pools, moderator/admin uploads and metadata tools with categorized tag entry/autocomplete, account/role administration, graceful error pages, individual downloads, and bounded portable ZIP exports. Viewers add images to pools from a post or through a searchable thumbnail picker with visual removal and ordering—database IDs never need to be entered. Uploads are hash-named beneath the configured media root, retain the submitted basename as metadata, thumbnails are generated during the request, and duplicate files are rejected before metadata is created. Published or otherwise authorized posts can be downloaded with either a readable tagged filename or a safe original-basename filename; selected visible browse results and authorized pools can be exported with original JPEG, PNG, or GIF bytes plus a complete `manifest.json`.
+
+Upload-capable accounts have a status-filtered **My uploads** view. An uploader can permanently delete their own post only after confirmation. An ordinary admin's cross-owner delete action quarantines the post instead; only the active super admin has server-wide image oversight and can inspect, restore, or permanently delete quarantined posts. Quarantined posts and media are excluded from normal browse, direct view, navigation, pools, favorites, downloads, and exports. Demoting a moderator or admin to viewer revokes their sessions and quarantines their non-deleted drafts; published uploads remain published, and promotion later does not restore quarantined drafts. Permanent deletion removes the database row, original, and thumbnail through private staging, rollback/reconciliation, and media-root containment, so the same SHA can be uploaded again.
 
 See [docs/product.md](docs/product.md) for v1 scope and routes, and [docs/architecture.md](docs/architecture.md) for the architecture and data model.
 
@@ -52,9 +54,9 @@ Passwords are 15–128 printable characters and are never trimmed or normalized.
 ## Account roles
 
 - Viewers can favorite published posts and create private-draft or public pools.
-- Moderators can also upload JPEG, PNG, and GIF images, edit metadata, and delete their own uploads.
-- Admins can delete any upload and manage viewers and moderators.
-- The single super admin can additionally promote/demote admins and explicitly transfer super-admin authority.
+- Moderators can also upload JPEG, PNG, and GIF images, edit metadata, and permanently delete their own uploads after confirmation.
+- Admins can upload and manage their own uploads, manage viewers and moderators, and quarantine cross-owner uploads instead of permanently deleting them.
+- The single super admin additionally has server-wide image oversight, can review/restore/permanently delete quarantined posts, can promote/demote admins, and can explicitly transfer super-admin authority.
 
 Sessions are stored in SQLite. Cookies are HTTP-only and SameSite=Lax; they are marked Secure automatically when Kura is served over TLS, while remaining usable on local plain HTTP. Every state-changing HTML form or JSON ceremony requires its session's CSRF token. Password login and recovery attempts have a small in-memory per-client/account rate limit.
 

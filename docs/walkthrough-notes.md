@@ -1,78 +1,50 @@
-# Walkthrough findings — 2026-09-13
+# Walkthrough notes — current behavior, 2026-09-17
 
-Recorded from the user's fresh-instance walkthrough. These are observations and requested follow-up work; application behavior has not been changed.
-
-## Keyboard navigation — implemented 2026-09-17
-
-Post pages now show visible Previous, Next, and Back controls. Previous/Next follow the validated source context; Escape follows validated Back; and keyboard handling ignores form controls, contenteditable content, and modifier-key combinations. First/last boundaries disable the unavailable direction. See the implemented contextual-navigation note below for the remaining walkthrough coverage checklist.
+The original fresh-instance findings and their focused follow-up slices are recorded here. The implementation status below is current; runtime credentials and seeded data remain checkout-local.
 
 ## Draft image ownership and visibility
 
-In this walkthrough seed:
+In the original walkthrough seed:
 
 | Draft image | Owner |
 | --- | --- |
 | #11 | moderator_two |
 | #16 | moderator_one |
 
-The user could not discover these drafts as super admin. The public browse grid always lists published images, including when signed in as an administrator. There is no personal upload listing or server-wide draft listing.
+The public browse grid lists only published, non-deleted, non-quarantined images. Active upload-capable accounts can open non-quarantined drafts directly for moderation; anonymous visitors cannot. Quarantined posts are excluded from normal detail and media authorization for every ordinary role, while an active super admin inspects them through the review view.
 
-The current detail/media authorization already allows upload-capable accounts (moderators, admins, and super admin) to access another uploader's draft directly. Live HTTP checks confirmed the seeded ordinary admin could open `/posts/11` and `/posts/16` (200). The super-admin role follows the same handler permission path, but its specific browser session was not tested. Anonymous access was rejected during initial seed verification.
+Private draft pools remain owner-only. `viewer-one-private-draft` belongs to `viewer_one`, and `viewer-two-private-draft` belongs to `viewer_two`; other viewers and administrators cannot view or edit them until publication.
 
-Thus the confirmed missing capability is discovering/managing drafts. If a direct draft URL also fails in the user's super-admin session, investigate that separately rather than assuming a role restriction.
+## Implemented: server-wide image oversight
 
-## Private draft pools remain owner-only
+The super-admin-only `/admin/images` view lists all post records with all, draft, published, deleted, and quarantined filters, uploader filtering, pagination, available thumbnails, and links to existing moderation/review controls. Ordinary admins receive `403` and do not see its navigation link. The view is metadata-backed; it does not scan arbitrary storage.
 
-The user accepts this behavior:
+An ordinary admin's cross-owner delete action quarantines rather than permanently deleting. The active super admin can inspect a quarantined post at `/admin/images/{id}/review`, restore it to its recorded previous status, or permanently delete it after typing the post ID. Quarantined media is retained for review but is unavailable through normal browse, post, media, navigation, pool, favorite, download, and ZIP-export paths.
 
-- `viewer-one-private-draft` belongs to viewer_one.
-- `viewer-two-private-draft` belongs to viewer_two.
-- Other viewers and administrators cannot view or edit these draft pools; publishing makes them browsable.
+## Implemented: My uploads
 
-Live HTTP checks confirmed the ordinary admin received 404 for both private pools. Keep this collection privacy requirement distinct from oversight of the uploaded image files stored on the server.
+`/uploads` is available to active moderators and admins. It is strictly uploader-scoped, excludes deleted and quarantined posts, provides all/draft/published filters and 24-item pagination, and links to preview/edit plus owner-scoped publish/unpublish actions. An owner can permanently delete an upload only after typing `DELETE`; the operation removes metadata, original, and thumbnail.
 
-## Requested: server-wide image oversight
+Status changes have ordinary redirect fallbacks and history-neutral HTMX fragment updates; permanent deletion uses an ordinary confirmation form and redirect. The archive boundary reloads the actor's current role, suspension state, and ownership, so a stale or suspended session cannot enumerate or mutate uploads.
 
-The user wants the server owner to be aware of images stored by moderators, including unpublished images. Their concern is that a moderator could use drafts to keep objectionable or potentially illegal material on the owner's storage without the owner discovering it.
+## Implemented: contextual post navigation
 
-Requested follow-up: a separate image oversight view in the admin/super-admin area, with draft/published filters, uploader identity, thumbnails/details, and appropriate moderation controls. Super-admin access is required; whether ordinary admins share this view remains a design choice to settle. Account for the existing policy that deleting a post retains its original and thumbnail on disk: hiding a post is not removal from storage.
+Post detail pages expose visible Previous, Next, and Back controls. Listing links carry a small allow-listed context for public browse/search, ordered pools, My uploads with its status filter, and super-admin image oversight with its status/uploader filters. The archive recomputes neighbors from that context for the current actor; it does not trust a return URL or client-supplied neighboring IDs. Invalid or no-longer-authorized contexts fall back to `/posts`, and deleted/private/inaccessible/quarantined records are excluded.
 
-The current code also gives every moderator direct access to others' draft images. Review whether this remains the intended moderation boundary when designing the oversight view.
+Escape follows the validated Back link, Left Arrow/Right Arrow follow available neighbors, and the shortcuts ignore inputs, textareas, selects, buttons, contenteditable content, and modifier keys. The controls use ordinary links so browser history remains authoritative.
 
-## Requested: my uploads
+## Implemented: role demotion and quarantine
 
-There is no panel for an uploader to review and manage their own drafted and published images. Add a personal image listing with status filters and links to preview, edit, publish/unpublish, and delete where their role/ownership permits. Keep the public browse grid focused on published images.
+When an authorized admin demotes a moderator/admin to viewer, Kura revokes that account's sessions and quarantines its non-deleted drafts in the same archive transaction. Published uploads remain published. Re-promoting the account does not automatically restore quarantined drafts; a super admin must review and restore them explicitly.
 
-## Implemented: clearer password-manager defaults — 2026-09-17
+## Implemented: permanent deletion and safe media lifecycle
 
-Passkey labels are now account-aware and editable: new-account and recovery forms start from `Kura passkey` and update to `Kura passkey for <username>` as the username is entered, while the Account page renders the complete account-specific default and identifies the read-only username used for adding a passkey.
+Permanent deletion is confirmation-gated and removes the SQLite post row, original, and thumbnail. Media is first moved into a private staging directory beneath the configured media root, with rollback on failure and startup reconciliation for interrupted staging. Relative-path checks prevent escaping the configured root, and once metadata/media are gone the same SHA can be uploaded again.
 
-The old generic defaults `My passkey`, `Super admin passkey`, and `Recovered passkey` are gone. Setup, registration, login, account, and recovery username inputs now use the same `name="username"` and `autocomplete="username"` identity. Recovery-code inputs remain text/recovery fields and are not password fields.
+## Implemented: graceful errors and authentication defaults
 
-Recovery output now identifies Kura, the username, the recovery purpose, and the warning that replacement/recovery rotates the previous code. Copy recovery details and download the same labeled text; the download uses a safe `kura-recovery-<username>.txt` filename. A separate code-only copy remains available for entering the code. Friendly labels are explicitly described as recognition aids, not a guarantee that Bitwarden will merge or separate credential items.
-
-Automated coverage protects generated defaults, form identity/autocomplete, escaping, labeled recovery content, safe filenames, and the existing account/passkey/recovery behavior. Chrome/Bitwarden behavior remains manual: use the checklist in [walkthrough.md](walkthrough.md) for multiple accounts, passkey creation/addition, cancellation, recovery replacement, and sign-in.
+User-facing failures use styled HTML pages or safe HTMX/JSON responses appropriate to the request. Setup, registration, login, account, and recovery forms share account-aware username/autocomplete identity; passkey defaults are editable and account-aware; recovery output names Kura, the username, purpose, rotation warning, and safe download filename. These labels help recognition but do not guarantee password-manager grouping. WebAuthn origin/RP checks, password policy, recovery rotation, and fresh-passkey requirements remain unchanged.
 
 ## Seed sign-in reference
 
-Seeded usernames: viewer_one, viewer_two, moderator_one, moderator_two, test_admin. Their shared local test password is recorded in `var/walkthrough-accounts.md`, which is ignored by Git. User-created accounts use the credentials chosen during the walkthrough.
-
-# Implemented: server-wide image oversight — 2026-09-13
-
-The administration area now has a super-admin-only **Images** view at `/admin/images`. It lists image records across accounts, including drafts, with status filters for all, drafts, published, and deleted records; an uploader identity filter; thumbnails for non-deleted records; pagination; and links to the existing post and metadata-edit controls.
-
-The current walkthrough database was checked before implementation: drafts #11 and #16 still belong to `moderator_two` and `moderator_one`, respectively. The view uses SQLite post rows and uploader identities only; it does not scan storage or remove files. Soft-deleted records are shown as `deleted` with “Media retained on disk,” and their media remains unavailable through the existing protected media route. Public browse remains published/non-deleted only, and private draft pools remain owner-only.
-
-The boundary is intentionally super-admin-only: ordinary admins still have account administration but receive `403` for `/admin/images` and do not see its navigation link. Existing upload-capable roles retain their direct draft detail/media access.
-
-## Implemented: My uploads — 2026-09-17
-
-The personal image-management view is available at `/uploads` for active moderators and admins. It is backed by an archive-owned uploader query that reloads the actor's current role and suspension state, then selects only non-deleted posts whose permanent `uploader_id` matches that actor. It provides All, Draft, and Published filters, 24-item pagination, thumbnails, dimensions/type/size and filename metadata, preview/edit links, owner-scoped publish/unpublish controls, and the existing soft-delete ownership rules.
-
-Status changes and deletion have ordinary form/redirect fallbacks and history-neutral HTMX fragment updates. The direct status command preserves source/tags and is authorized to the current owner at the archive boundary; moderators cannot use the personal endpoints to enumerate or mutate another uploader's images. Deleted media is excluded from the personal view and remains protected by the existing media visibility rules. Public browsing and private draft pools remain unchanged, and `/admin/images` remains the separate super-admin server-wide oversight view.
-
-## Implemented: contextual post navigation — 2026-09-17
-
-Post detail pages now expose visible Previous, Next, and Back controls. Listing links carry a small allow-listed context for public browse/search, ordered pools, My uploads with its status filter, and super-admin image oversight with its status/uploader filters. The archive recomputes neighbors from that context for the current actor on every detail request; it does not trust a return URL or client-supplied neighboring IDs. Invalid or no-longer-authorized contexts fall back to `/posts`, and deleted/private/inaccessible records are excluded.
-
-Escape follows the validated Back link, Left Arrow/Right Arrow follow available neighbors, and the shortcuts ignore inputs, textareas, selects, buttons, contenteditable content, and modifier keys. The controls use ordinary links so browser history remains authoritative. Live walkthrough checks should cover search and pool transitions, active upload/admin filters, first/last boundaries, quick-editor focus, and Back/Forward behavior.
+Seeded usernames: `viewer_one`, `viewer_two`, `moderator_one`, `moderator_two`, `test_admin`. Their shared local test password is recorded in `var/walkthrough-accounts.md`, which is ignored by Git. User-created accounts use the credentials chosen during the walkthrough.

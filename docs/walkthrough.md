@@ -49,8 +49,8 @@ Each setup method requires a separate fresh database to test first-time enrollme
 - [ ] Try an unsupported file (for example a WebP or MP4 from the folder), an empty file, and a file exceeding 32 MB: each must be rejected.
 - [ ] Edit tags/source through the inline editor; cancel, save, reload, and check search results. Publish a draft and verify public visibility.
 - [ ] Use Back/Forward after inline editing and check it returns to the expected browsing page.
-- [ ] As `moderator_one`, delete its own disposable image. Confirm another moderator's image cannot be deleted by it. Use the ownership map to choose each case.
-- [ ] As `test_admin`, delete another account's disposable image. Confirm the post disappears but its original/thumbnail files remain on disk.
+- [ ] As `moderator_one`, permanently delete its own disposable image through My uploads or its post action. Type `DELETE`, confirm the post row and both media files are gone, then re-upload the exact original to confirm the same SHA is accepted again. Confirm another moderator's image cannot be deleted by it.
+- [ ] As `test_admin`, delete another account's disposable image. Confirm the ordinary-admin action quarantines it rather than permanently deleting it: it leaves normal browse/detail/media/navigation/pool/favorite/download/export paths, while the files remain available only for super-admin review.
 - [ ] After adding nine more published images (25 total), check pagination and Back/Forward across pages and searches; opening an image from page 2 must return to the same search/page context.
 
 ## 5. Account security and administration
@@ -63,7 +63,8 @@ Each setup method requires a separate fresh database to test first-time enrollme
 - [ ] Sign in in two browser profiles; revoke other sessions and check that the other profile is signed out.
 - [ ] As `test_admin`, promote/demote an ordinary viewer/moderator and suspend/reactivate an account. Confirm suspension blocks access while uploads remain owned and intact.
 - [ ] Confirm `test_admin` cannot promote anyone to admin, demote an admin, or transfer super-admin authority.
-- [ ] As your super admin, open Admin → Images. Check the draft/published/deleted filters, uploader identities, thumbnails, pagination, and links to existing post/edit controls. Confirm ordinary admins do not see or open this view; deleted records say their media is retained and do not offer a purge action.
+- [ ] As your super admin, open Admin → Images. Check the draft/published/deleted/quarantined filters, uploader identities, thumbnails, pagination, and links to existing post/edit/review controls. Confirm ordinary admins do not see or open this view. Open a quarantined post, restore it to its prior status, then quarantine and permanently delete a disposable post by typing its post ID.
+- [ ] Demote a disposable moderator/admin to viewer. Confirm its sessions are revoked, its non-deleted drafts are quarantined, published uploads remain published, and re-promoting the account does not auto-restore those drafts.
 - [ ] As your super admin, promote/demote a disposable admin. Check protection against suspending/demoting the active super admin.
 - [ ] If testing authority transfer, do it last: transfer to a disposable active admin and confirm only the recipient retains super-admin controls.
 - [ ] Check Back/Forward after inline account and admin actions. With JavaScript disabled, check the ordinary favorite/pool/admin forms still submit and redirect.
