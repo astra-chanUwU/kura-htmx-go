@@ -119,7 +119,10 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 			}
 			return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
 		},
-		"postLink": postLink,
+		"passkeyDefault":   passkeyDefaultName,
+		"recoveryDetails":  recoveryDetails,
+		"recoveryFilename": recoveryDownloadFilename,
+		"postLink":         postLink,
 	}
 	t, err := template.New("base").Funcs(funcs).ParseFS(assets, "templates/*.html")
 	if err != nil {

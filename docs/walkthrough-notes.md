@@ -43,13 +43,15 @@ The current code also gives every moderator direct access to others' draft image
 
 There is no panel for an uploader to review and manage their own drafted and published images. Add a personal image listing with status filters and links to preview, edit, publish/unpublish, and delete where their role/ownership permits. Keep the public browse grid focused on published images.
 
-## Requested: clearer password-manager defaults
+## Implemented: clearer password-manager defaults — 2026-09-17
 
-The user wants better defaults when combining passkeys, passwords, and recovery codes, so the entries are distinguishable and do not conflict in their password manager.
+Passkey labels are now account-aware and editable: new-account and recovery forms start from `Kura passkey` and update to `Kura passkey for <username>` as the username is entered, while the Account page renders the complete account-specific default and identifies the read-only username used for adding a passkey.
 
-Observed defaults include `My passkey`, `Super admin passkey`, and `Recovered passkey`. Record the actual password-manager collision/replacement behavior during a Chrome/Bitwarden walkthrough before treating a particular default as the cause.
+The old generic defaults `My passkey`, `Super admin passkey`, and `Recovered passkey` are gone. Setup, registration, login, account, and recovery username inputs now use the same `name="username"` and `autocomplete="username"` identity. Recovery-code inputs remain text/recovery fields and are not password fields.
 
-Explore clear account-specific passkey labels, consistent account/site identity across setup and account forms, and recovery-code copy/download text that identifies the account. Recovery codes should be saved as recovery information associated with the account, without presenting them as a replacement login password. Verify password autofill, adding a passkey to an existing password entry, recovery-code replacement, and multiple local test accounts. Browser-extension interoperability requires manual acceptance.
+Recovery output now identifies Kura, the username, the recovery purpose, and the warning that replacement/recovery rotates the previous code. Copy recovery details and download the same labeled text; the download uses a safe `kura-recovery-<username>.txt` filename. A separate code-only copy remains available for entering the code. Friendly labels are explicitly described as recognition aids, not a guarantee that Bitwarden will merge or separate credential items.
+
+Automated coverage protects generated defaults, form identity/autocomplete, escaping, labeled recovery content, safe filenames, and the existing account/passkey/recovery behavior. Chrome/Bitwarden behavior remains manual: use the checklist in [walkthrough.md](walkthrough.md) for multiple accounts, passkey creation/addition, cancellation, recovery replacement, and sign-in.
 
 ## Seed sign-in reference
 

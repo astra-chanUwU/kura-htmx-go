@@ -36,6 +36,39 @@
       userHandle: credential.response.userHandle ? encode(credential.response.userHandle) : null,
     },
   };
+  const passkeyDefaultName = (username) => username.trim() ? `Kura passkey for ${username.trim()}` : 'Kura passkey';
+  const recoveryDetails = (username, code) => [
+    'Kura account recovery',
+    `Username: ${username.trim()}`,
+    'Purpose: Recover this account or replace its sign-in methods.',
+    `Recovery code: ${code}`,
+    'Replacing or recovering this account rotates the recovery code; the previous code is no longer valid.',
+  ].join('\n');
+  const recoveryDownloadFilename = (username) => {
+    const safe = username.trim().replace(/[^A-Za-z0-9_-]+/g, '_');
+    return `kura-recovery-${safe || 'account'}.txt`;
+  };
+  const usernameFor = (button) => button?.dataset.username ? document.querySelector(button.dataset.username)?.value || '' : '';
+  const passkeyNameSyncs = new WeakMap();
+  function bindPasskeyDefault(button) {
+    const name = document.querySelector(button.dataset.name);
+    const username = document.querySelector(button.dataset.username);
+    if (!name || !username) return;
+    let lastGenerated = name.value;
+    let generated = name.value === passkeyDefaultName('') || name.value === passkeyDefaultName(username.value);
+    const update = () => {
+      if (!generated && name.value !== lastGenerated) return;
+      name.value = passkeyDefaultName(username.value);
+      lastGenerated = name.value;
+      generated = true;
+    };
+    username.addEventListener('input', update);
+    name.addEventListener('input', () => {
+      if (name.value !== lastGenerated) generated = false;
+    });
+    update();
+    passkeyNameSyncs.set(button, update);
+  }
   async function post(url, body, challenge, extraHeaders) {
     const response = await fetch(url, {
       method: 'POST', credentials: 'same-origin', body: JSON.stringify(body || {}),
@@ -53,22 +86,27 @@
     }
     return response.json();
   }
-  function showRecovery(code) {
+  function showRecovery(code, username) {
     const panel = document.querySelector('[data-recovery-result]');
     if (!panel || !code) return false;
+    const account = (username || panel.dataset.recoveryUsername || '').trim();
     panel.hidden = false;
+    panel.dataset.recoveryUsername = account;
+    panel.dataset.recoveryFilename = recoveryDownloadFilename(account);
     panel.querySelector('[data-recovery-code]').textContent = code;
+    panel.querySelector('[data-recovery-details]').textContent = recoveryDetails(account, code);
     panel.scrollIntoView({ block: 'center' });
     return true;
   }
-  async function copyRecovery(button) {
-    const code = button.closest('.recovery-code')?.querySelector('[data-recovery-code]')?.textContent || '';
-    if (!code) return;
+  async function copyRecovery(button, codeOnly) {
+    const panel = button.closest('.recovery-code');
+    const value = panel?.querySelector(codeOnly ? '[data-recovery-code]' : '[data-recovery-details]')?.textContent || '';
+    if (!value) return;
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(value);
     } else {
       const field = document.createElement('textarea');
-      field.value = code;
+      field.value = value;
       document.body.append(field);
       field.select();
       document.execCommand('copy');
@@ -89,6 +127,7 @@
       bootstrap: ['/setup/passkey/begin', '/setup/passkey/finish'],
       recover: ['/recover/passkey/begin', '/recover/passkey/finish'],
     }[action];
+    passkeyNameSyncs.get(button)?.();
     const input = {};
     if (button.dataset.username) input.username = document.querySelector(button.dataset.username)?.value || '';
     if (button.dataset.name) input.name = document.querySelector(button.dataset.name)?.value || '';
@@ -103,7 +142,7 @@
       const publicKey = isCreate ? creationOptions(begun.options.publicKey) : requestOptions(begun.options.publicKey);
       const credential = isCreate ? await navigator.credentials.create({ publicKey }) : await navigator.credentials.get({ publicKey });
       const result = await post(endpoints[1], credentialJSON(credential), begun.challengeToken, extraHeaders);
-      if (!showRecovery(result.recoveryCode)) {
+      if (!showRecovery(result.recoveryCode, usernameFor(button))) {
         if (result.redirect) location.assign(result.redirect);
         else location.reload();
       }
@@ -116,13 +155,7 @@
       button.disabled = false;
     }
   }
-  document.querySelectorAll('[data-download-recovery]').forEach((download) => {
-    const copy = document.createElement('button');
-    copy.type = 'button';
-    copy.dataset.copyRecovery = '';
-    copy.textContent = 'Copy code';
-    download.before(copy);
-  });
+  document.querySelectorAll('[data-passkey-action][data-name][data-username]').forEach(bindPasskeyDefault);
   document.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-passkey-action]');
     if (button) run(button);
@@ -130,12 +163,18 @@
     if (copy) {
       try { await copyRecovery(copy); } catch { copy.textContent = 'Copy failed'; }
     }
+    const copyCode = event.target.closest('[data-copy-recovery-code]');
+    if (copyCode) {
+      try { await copyRecovery(copyCode, true); } catch { copyCode.textContent = 'Copy failed'; }
+    }
     const download = event.target.closest('[data-download-recovery]');
     if (download) {
-      const code = download.closest('.recovery-code')?.querySelector('[data-recovery-code]')?.textContent || '';
+      const panel = download.closest('.recovery-code');
+      const details = panel?.querySelector('[data-recovery-details]')?.textContent || '';
+      const username = panel?.dataset.recoveryUsername || '';
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(new Blob([code + '\n'], { type: 'text/plain' }));
-      link.download = 'kura-recovery-code.txt';
+      link.href = URL.createObjectURL(new Blob([details + '\n'], { type: 'text/plain' }));
+      link.download = panel?.dataset.recoveryFilename || recoveryDownloadFilename(username);
       link.click();
       URL.revokeObjectURL(link.href);
     }

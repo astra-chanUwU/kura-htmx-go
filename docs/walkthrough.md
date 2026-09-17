@@ -10,7 +10,7 @@ The starting dataset has five ordinary accounts: `viewer_one`, `viewer_two`, `mo
 
 - [ ] Open the setup link and create your own username with a password, a passkey, or both. Passwords require 15–128 printable characters.
 - [ ] Confirm your account is the super admin and can open account administration.
-- [ ] If using a passkey, save the recovery code immediately. Check that Chrome/Bitwarden stores and uses the passkey.
+- [ ] If using a passkey, save the labeled Kura recovery details immediately. Check that Chrome/Bitwarden stores and uses the passkey; the friendly label helps identify the account but does not guarantee how items are grouped.
 - [ ] Reopen the used setup link: it must not create another super admin.
 - [ ] Sign out and sign back in with the method you chose.
 
@@ -56,10 +56,10 @@ Each setup method requires a separate fresh database to test first-time enrollme
 ## 5. Account security and administration
 
 - [ ] Register a new viewer and check password sign-in, incorrect credentials, case-insensitive username matching, and duplicate usernames.
-- [ ] On Account, change the password, add a named passkey, sign out, and verify both sign-in methods.
-- [ ] With Chrome/Bitwarden, test passkey-only registration and sign-in; add a second passkey; cancel browser prompts and confirm retry remains possible.
+- [ ] On Account, change the password, confirm the read-only username identity, add the suggested account-specific passkey label (edit it if desired), sign out, and verify both sign-in methods.
+- [ ] With Chrome/Bitwarden, use at least two local accounts. Check that setup, registration, login, account, and recovery username fields identify the intended account; test passkey-only registration and sign-in; add a second passkey to an existing account; cancel each browser prompt and confirm retry remains possible.
 - [ ] After fresh passkey verification, remove the password and verify passwordless sign-in. Attempt to remove the last remaining sign-in method: it must be refused.
-- [ ] Replace a recovery code and save it. Recover the account using it, save the replacement, and check that the old code cannot be reused.
+- [ ] Replace a recovery code and save the labeled/downloadable Kura details. Confirm the username, purpose, rotation warning, and account-specific filename; recover the account using it, save the replacement, and check that the old code cannot be reused.
 - [ ] Sign in in two browser profiles; revoke other sessions and check that the other profile is signed out.
 - [ ] As `test_admin`, promote/demote an ordinary viewer/moderator and suspend/reactivate an account. Confirm suspension blocks access while uploads remain owned and intact.
 - [ ] Confirm `test_admin` cannot promote anyone to admin, demote an admin, or transfer super-admin authority.
@@ -67,6 +67,13 @@ Each setup method requires a separate fresh database to test first-time enrollme
 - [ ] As your super admin, promote/demote a disposable admin. Check protection against suspending/demoting the active super admin.
 - [ ] If testing authority transfer, do it last: transfer to a disposable active admin and confirm only the recipient retains super-admin controls.
 - [ ] Check Back/Forward after inline account and admin actions. With JavaScript disabled, check the ordinary favorite/pool/admin forms still submit and redirect.
+
+### Chrome/Bitwarden identity checklist
+
+- [ ] In separate Chrome profiles or clearly separated sessions, repeat the password and passkey flows for two usernames and verify the username shown beside each Kura credential before saving.
+- [ ] Confirm passkey labels are editable and account-aware, then verify cancellation leaves the form usable and does not create a credential or rotate a recovery code.
+- [ ] Copy the recovery details and download them once. Check that the copied/downloaded text names Kura, the username, the recovery purpose, and that replacement/recovery invalidates the previous code; check the filename contains only the safe account identifier.
+- [ ] Treat browser-extension grouping, merging, and separation as manual observations only: the Kura labels are hints for recognition, not a guarantee of Bitwarden item behavior.
 
 ## Restarting later
 
