@@ -41,7 +41,7 @@ func (s *Server) browseData(r *http.Request) (viewData, error) {
 	if encoded := r.URL.Query().Encode(); encoded != "" {
 		source += "?" + encoded
 	}
-	return viewData{Title: "Posts — Kura", ActiveNav: "posts", Page: p, Tags: tags, TagGroups: groupTags(tags), Query: p.Query, BulkSource: source, ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes}, nil
+	return viewData{Title: "Posts — Kura", ActiveNav: "posts", Page: p, Tags: tags, TagGroups: groupTags(tags), Query: p.Query, BulkSource: source, PostContext: browsePostContext(r), ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes}, nil
 }
 
 func (s *Server) posts(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +88,11 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
+	context, navigation, err := s.postNavigation(r, p.ID)
+	if err != nil {
+		s.respondError(w, r, http.StatusInternalServerError, "")
+		return
+	}
 	var pools []archive.Pool
 	if user := currentUser(r); user != nil && p.Status == "published" {
 		pools, err = s.store.OwnedPoolsForPost(r.Context(), user.ID, p.ID)
@@ -96,7 +101,16 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.render(w, r, "post", viewData{Title: fmt.Sprintf("Post %d — Kura", p.ID), ActiveNav: "posts", Post: p, Pools: pools})
+	data := viewData{Title: fmt.Sprintf("Post %d — Kura", p.ID), ActiveNav: "posts", Post: p, Pools: pools, BackURL: context.backPath()}
+	if navigation.PreviousID > 0 {
+		data.HasPrevious = true
+		data.PreviousURL = context.detailPath(navigation.PreviousID)
+	}
+	if navigation.NextID > 0 {
+		data.HasNext = true
+		data.NextURL = context.detailPath(navigation.NextID)
+	}
+	s.render(w, r, "post", data)
 }
 
 func tagsString(tags []archive.Tag) string {

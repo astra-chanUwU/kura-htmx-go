@@ -64,6 +64,9 @@ type viewData struct {
 	BulkPreview                                          archive.BulkTagPreview
 	BulkPostIDs, BulkAddTags, BulkRemoveTags             string
 	BulkSource                                           string
+	PostContext                                          postContext
+	BackURL, PreviousURL, NextURL                        string
+	HasPrevious, HasNext                                 bool
 	ExportMaxPosts                                       int
 	ExportMaxBytes, ExportBytes                          int64
 	UploaderID                                           int64
@@ -116,6 +119,7 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 			}
 			return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
 		},
+		"postLink": postLink,
 	}
 	t, err := template.New("base").Funcs(funcs).ParseFS(assets, "templates/*.html")
 	if err != nil {

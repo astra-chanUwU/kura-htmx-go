@@ -15,7 +15,7 @@
 <div class="result-head"><b>{{.Page.Total}} posts</b>{{if .Query}}<span>matching “{{.Query}}”</span>{{end}}</div>
 {{template "export-toolbar" .}}
 {{if .User}}{{if .User.CanUpload}}{{template "bulk-tag-toolbar" .}}{{end}}{{end}}
-{{if .Page.Posts}}<div class="grid">{{range .Page.Posts}}<article class="bulk-card"><label class="bulk-check"><input type="checkbox" data-export-post="{{.ID}}" data-export-bytes="{{.ByteSize}}"{{if $.User}}{{if $.User.CanUpload}} data-bulk-post="{{.ID}}" data-bulk-post-checkbox{{end}}{{end}}><span class="visually-hidden">Select post {{.ID}}</span></label><a class="thumb" href="/posts/{{.ID}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a></article>{{end}}</div>{{else}}<div class="empty"><b>No posts found.</b><p>Try fewer tags or <a href="/posts">browse all posts</a>.</p></div>{{end}}
+{{if .Page.Posts}}<div class="grid">{{range .Page.Posts}}<article class="bulk-card"><label class="bulk-check"><input type="checkbox" data-export-post="{{.ID}}" data-export-bytes="{{.ByteSize}}"{{if $.User}}{{if $.User.CanUpload}} data-bulk-post="{{.ID}}" data-bulk-post-checkbox{{end}}{{end}}><span class="visually-hidden">Select post {{.ID}}</span></label><a class="thumb" href="{{postLink .ID $.PostContext}}" title="Post {{.ID}} · {{.Width}} × {{.Height}}"><img src="{{media .ThumbnailPath}}" loading="lazy" width="{{.Width}}" height="{{.Height}}" alt="Post {{.ID}}"></a></article>{{end}}</div>{{else}}<div class="empty"><b>No posts found.</b><p>Try fewer tags or <a href="/posts">browse all posts</a>.</p></div>{{end}}
 {{template "pagination" .}}
 </section>
 </div>

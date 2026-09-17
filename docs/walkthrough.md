@@ -22,7 +22,8 @@ Each setup method requires a separate fresh database to test first-time enrollme
 - [ ] Search `walkthrough`, `jpeg`, `png`, and `gif`; search `anime scene` to check that both tags are required. Try mixed case and extra spaces.
 - [ ] Try a nonexistent tag and confirm a useful empty result.
 - [ ] Open an image: check dimensions, size, tags, original image, and thumbnail. Check GIF animation on its detail page.
-- [ ] Explore current keyboard behavior: Escape/Left Arrow returns to Posts; previous/next image navigation is missing and recorded for follow-up. Try Random.
+- [ ] Open an image from public browse/search, a pool, My uploads, and (as super admin) Admin → Images. Confirm each detail page shows validated Previous, Next, and Back controls for that source ordering; first/last images disable the unavailable direction.
+- [ ] Use Left/Right Arrow outside controls to move through the current image context and Escape to return to its listing. While the quick editor is open, confirm typing in inputs/selects and pressing buttons does not navigate; modifier-key shortcuts do nothing. Use browser Back/Forward after moving between images.
 - [ ] Confirm drafts #11 (moderator_two) and #16 (moderator_one) and both private draft pools cannot be opened while signed out. Admins can open draft image URLs directly; the browse grid does not list them. Private draft pools remain owner-only.
 - [ ] Confirm favorites, upload, and administration require appropriate sign-in.
 - [ ] Switch between the Light and Magic Girl themes; navigate and reload to check that the choice persists.
@@ -50,7 +51,7 @@ Each setup method requires a separate fresh database to test first-time enrollme
 - [ ] Use Back/Forward after inline editing and check it returns to the expected browsing page.
 - [ ] As `moderator_one`, delete its own disposable image. Confirm another moderator's image cannot be deleted by it. Use the ownership map to choose each case.
 - [ ] As `test_admin`, delete another account's disposable image. Confirm the post disappears but its original/thumbnail files remain on disk.
-- [ ] After adding nine more published images (25 total), check pagination and Back/Forward across pages and searches.
+- [ ] After adding nine more published images (25 total), check pagination and Back/Forward across pages and searches; opening an image from page 2 must return to the same search/page context.
 
 ## 5. Account security and administration
 

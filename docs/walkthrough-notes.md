@@ -2,11 +2,9 @@
 
 Recorded from the user's fresh-instance walkthrough. These are observations and requested follow-up work; application behavior has not been changed.
 
-## Keyboard navigation needs exploration
+## Keyboard navigation — implemented 2026-09-17
 
-The checklist overstated the current behavior: post pages have no previous/next image navigation. Their current shortcut sends Escape or Left Arrow to `/posts`; Right Arrow does nothing. The handler also runs while typing in form fields, which can interrupt metadata editing.
-
-Explore expected shortcuts, visible previous/next controls, preserving the current search/pool context, and avoiding shortcuts while editing fields. Browser history and first/last-image behavior need manual acceptance when implemented.
+Post pages now show visible Previous, Next, and Back controls. Previous/Next follow the validated source context; Escape follows validated Back; and keyboard handling ignores form controls, contenteditable content, and modifier-key combinations. First/last boundaries disable the unavailable direction. See the implemented contextual-navigation note below for the remaining walkthrough coverage checklist.
 
 ## Draft image ownership and visibility
 
@@ -70,3 +68,9 @@ The boundary is intentionally super-admin-only: ordinary admins still have accou
 The personal image-management view is available at `/uploads` for active moderators and admins. It is backed by an archive-owned uploader query that reloads the actor's current role and suspension state, then selects only non-deleted posts whose permanent `uploader_id` matches that actor. It provides All, Draft, and Published filters, 24-item pagination, thumbnails, dimensions/type/size and filename metadata, preview/edit links, owner-scoped publish/unpublish controls, and the existing soft-delete ownership rules.
 
 Status changes and deletion have ordinary form/redirect fallbacks and history-neutral HTMX fragment updates. The direct status command preserves source/tags and is authorized to the current owner at the archive boundary; moderators cannot use the personal endpoints to enumerate or mutate another uploader's images. Deleted media is excluded from the personal view and remains protected by the existing media visibility rules. Public browsing and private draft pools remain unchanged, and `/admin/images` remains the separate super-admin server-wide oversight view.
+
+## Implemented: contextual post navigation — 2026-09-17
+
+Post detail pages now expose visible Previous, Next, and Back controls. Listing links carry a small allow-listed context for public browse/search, ordered pools, My uploads with its status filter, and super-admin image oversight with its status/uploader filters. The archive recomputes neighbors from that context for the current actor on every detail request; it does not trust a return URL or client-supplied neighboring IDs. Invalid or no-longer-authorized contexts fall back to `/posts`, and deleted/private/inaccessible records are excluded.
+
+Escape follows the validated Back link, Left Arrow/Right Arrow follow available neighbors, and the shortcuts ignore inputs, textareas, selects, buttons, contenteditable content, and modifier keys. The controls use ordinary links so browser history remains authoritative. Live walkthrough checks should cover search and pool transitions, active upload/admin filters, first/last boundaries, quick-editor focus, and Back/Forward behavior.

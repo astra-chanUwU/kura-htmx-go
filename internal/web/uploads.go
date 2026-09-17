@@ -24,7 +24,7 @@ func (s *Server) uploadsData(r *http.Request, actor archive.User) (viewData, err
 	if err != nil {
 		return viewData{}, err
 	}
-	return viewData{Title: "My uploads — Kura", ActiveNav: "uploads", Page: page, Status: status}, nil
+	return viewData{Title: "My uploads — Kura", ActiveNav: "uploads", Page: page, Status: status, PostContext: uploadsPostContext(status, page.Page)}, nil
 }
 
 func (s *Server) uploads(w http.ResponseWriter, r *http.Request) {

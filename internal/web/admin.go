@@ -30,7 +30,7 @@ func (s *Server) adminImages(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
-	s.render(w, r, "admin-images", viewData{Title: "Images — Kura", ActiveNav: "admin-images", Page: page, Status: status, Users: users, UploaderID: uploaderID})
+	s.render(w, r, "admin-images", viewData{Title: "Images — Kura", ActiveNav: "admin-images", Page: page, Status: status, Users: users, UploaderID: uploaderID, PostContext: adminPostContext(status, uploaderID, page.Page)})
 }
 
 func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {

@@ -41,7 +41,7 @@ func (s *Server) pool(w http.ResponseWriter, r *http.Request) {
 	for _, post := range pool.Posts {
 		exportBytes += post.ByteSize
 	}
-	s.render(w, r, "pool", viewData{Title: pool.Name + " — Kura", ActiveNav: "pools", Pool: pool, ExportBytes: exportBytes, ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes})
+	s.render(w, r, "pool", viewData{Title: pool.Name + " — Kura", ActiveNav: "pools", Pool: pool, PostContext: poolPostContext(pool.Slug), ExportBytes: exportBytes, ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes})
 }
 
 func (s *Server) newPool(w http.ResponseWriter, r *http.Request) {
