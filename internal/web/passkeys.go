@@ -48,8 +48,9 @@ func (p goPasskeys) FinishLogin(user archive.User, session webauthn.SessionData,
 }
 
 type AuthConfig struct {
-	RPID    string
-	Origins []string
+	RPID             string
+	Origins          []string
+	RegistrationMode string
 }
 
 type passkeyRegistrationState struct {
@@ -60,16 +61,23 @@ type passkeyRegistrationState struct {
 	UserID       int64                `json:"userId,omitempty"`
 	PasswordHash string               `json:"passwordHash,omitempty"`
 	RecoveryHash string               `json:"recoveryHash,omitempty"`
+	InviteHash   string               `json:"inviteHash,omitempty"`
 }
 
 func (s *Server) passkeyRegistrationBegin(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Username string `json:"username"`
 		Name     string `json:"name"`
+		Password string `json:"password"`
+		Invite   string `json:"invite"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		s.respondError(w, r, http.StatusBadRequest, "The passkey request could not be read.")
+		return
+	}
+	if err := s.registrationAllowed(r.Context(), input.Invite); err != nil {
+		s.respondError(w, r, http.StatusForbidden, err.Error())
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
@@ -82,12 +90,24 @@ func (s *Server) passkeyRegistrationBegin(w http.ResponseWriter, r *http.Request
 		s.respondError(w, r, http.StatusBadRequest, "The username could not be accepted.")
 		return
 	}
+	passwordHash := ""
+	if input.Password != "" {
+		passwordHash, err = archive.PreparePassword(input.Password)
+		if err != nil {
+			s.respondError(w, r, http.StatusBadRequest, "The password could not be prepared.")
+			return
+		}
+	}
 	creation, session, err := s.passkeys.BeginRegistration(user)
 	if err != nil {
 		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}
-	state, err := json.Marshal(passkeyRegistrationState{Session: *session, Username: user.Username, Name: input.Name, Handle: user.PasskeyHandle})
+	inviteHash := ""
+	if input.Invite != "" {
+		inviteHash = archive.RegistrationInviteIdentifier(input.Invite)
+	}
+	state, err := json.Marshal(passkeyRegistrationState{Session: *session, Username: user.Username, Name: input.Name, Handle: user.PasskeyHandle, PasswordHash: passwordHash, InviteHash: inviteHash})
 	if err != nil {
 		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
@@ -118,7 +138,13 @@ func (s *Server) passkeyRegistrationFinish(w http.ResponseWriter, r *http.Reques
 		s.respondError(w, r, http.StatusBadRequest, "Passkey registration could not be completed.")
 		return
 	}
-	created, recovery, err := s.store.CreatePasskeyOnlyAccountWithHandle(r.Context(), state.Username, state.Name, state.Handle, *credential)
+	var created archive.User
+	var recovery string
+	if state.InviteHash != "" {
+		created, recovery, err = s.store.CreatePasskeyAccountWithInviteHash(r.Context(), state.InviteHash, state.Username, state.Name, state.Handle, *credential, state.PasswordHash)
+	} else {
+		created, recovery, err = s.store.CreatePasskeyAccountWithHandleAndPassword(r.Context(), state.Username, state.Name, state.Handle, *credential, state.PasswordHash)
+	}
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, archive.ErrUsernameTaken) {

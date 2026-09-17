@@ -55,7 +55,9 @@ Each setup method requires a separate fresh database to test first-time enrollme
 
 ## 5. Account security and administration
 
+- [ ] Choose a registration mode before the walkthrough: omit `KURA_REGISTRATION_MODE` for open (the default), use `closed` to hide/deny public registration while retaining login and recovery, or use `invite-only` to require a super-admin invitation.
 - [ ] Register a new viewer and check password sign-in, incorrect credentials, case-insensitive username matching, and duplicate usernames.
+- [ ] In invite-only mode, as the super admin open Admin → Invitations, create a short-lived invitation, copy its local URL/code once, and verify an invited viewer can choose password-only, passkey-only, or both. Reusing, expiring, or revoking the invitation must fail with the same generic invalid-invitation message.
 - [ ] On Account, change the password, confirm the read-only username identity, add the suggested account-specific passkey label (edit it if desired), sign out, and verify both sign-in methods.
 - [ ] With Chrome/Bitwarden, use at least two local accounts. Check that setup, registration, login, account, and recovery username fields identify the intended account; test passkey-only registration and sign-in; add a second passkey to an existing account; cancel each browser prompt and confirm retry remains possible.
 - [ ] After fresh passkey verification, remove the password and verify passwordless sign-in. Attempt to remove the last remaining sign-in method: it must be refused.

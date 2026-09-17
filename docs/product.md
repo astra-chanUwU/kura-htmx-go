@@ -9,6 +9,7 @@
 - Jump to a random published post.
 - Browse pools/collections and their ordered posts.
 - Register and sign in with password, passkey-only, or both; recover locally without email; keep favorites private to each viewer.
+- Configure registration as open (default), closed, or invite-only. In invite-only mode, the active super admin issues bounded-expiry, single-use viewer invitations without email delivery.
 - Create owned pools as owner-only drafts or publicly visible collections; add from post pages or use a searchable thumbnail picker to select and reorder images.
 - Upload from file, drag/drop, or clipboard as a moderator or admin.
 - Preview before publish; save drafts and publish deliberately.
@@ -60,6 +61,7 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `GET/POST /posts/{id}/edit` | Moderator metadata and publication state |
 | `POST /posts/{id}/delete` | Permanently delete the current user's upload after confirmation, or quarantine a cross-owner upload when used by an ordinary admin |
 | `GET /admin/accounts` | Admin account and role management |
+| `GET /admin/invites`, `POST /admin/invites`, `POST /admin/invites/{id}/revoke` | Super-admin-only invite issuance and revocation |
 | `GET /uploads` | The current moderator/admin's non-deleted uploads with all/draft/published filters and pagination |
 | `POST /uploads/{id}/status` | Owner-scoped publish/unpublish status change |
 | `POST /uploads/{id}/permanent-delete` | Confirmation-gated permanent deletion of an owned upload |

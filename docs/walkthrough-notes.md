@@ -47,6 +47,10 @@ Permanent deletion is confirmation-gated and removes the SQLite post row, origin
 
 User-facing failures use styled HTML pages or safe HTMX/JSON responses appropriate to the request. Setup, registration, login, account, and recovery forms share account-aware username/autocomplete identity; passkey defaults are editable and account-aware; recovery output names Kura, the username, purpose, rotation warning, and safe download filename. These labels help recognition but do not guarantee password-manager grouping. WebAuthn origin/RP checks, password policy, recovery rotation, and fresh-passkey requirements remain unchanged.
 
+## Implemented: controlled registration
+
+`KURA_REGISTRATION_MODE` selects `open` (the default), `closed`, or `invite-only`. Closed mode removes the public registration link and explains the restriction while leaving setup, login, and recovery available. Invite-only mode exposes super-admin-only Admin → Invitations controls. Each generated code is shown once, stored only as a hash, expires within the requested bound, can be revoked while unused, and is consumed atomically with a viewer account. Password and passkey registration both retain CSRF/WebAuthn checks, and invalid, expired, revoked, or reused codes share generic error copy.
+
 ## Seed sign-in reference
 
 Seeded usernames: `viewer_one`, `viewer_two`, `moderator_one`, `moderator_two`, `test_admin`. Their shared local test password is recorded in `var/walkthrough-accounts.md`, which is ignored by Git. User-created accounts use the credentials chosen during the walkthrough.

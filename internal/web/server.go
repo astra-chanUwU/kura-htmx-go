@@ -31,19 +31,22 @@ type contextKey int
 const sessionContext contextKey = iota
 
 type Server struct {
-	store           *archive.Store
-	mediaRoot       string
-	media           mediafiles.Ingestor
-	templates       *template.Template
-	passkeys        passkeyCeremonies
-	loginLimiter    *attemptLimiter
-	recoveryLimiter *attemptLimiter
+	store            *archive.Store
+	mediaRoot        string
+	media            mediafiles.Ingestor
+	templates        *template.Template
+	passkeys         passkeyCeremonies
+	registrationMode string
+	loginLimiter     *attemptLimiter
+	recoveryLimiter  *attemptLimiter
 }
 
 type viewData struct {
 	Title, ActiveNav, Query, Error, Notice, Next, Status string
 	ErrorHeading                                         string
 	ErrorStatus                                          int
+	RegistrationMode                                     string
+	InviteToken, InviteURL                               string
 	RecoveryCode                                         string
 	SetupToken                                           string
 	Source, PoolSlug                                     string
@@ -72,6 +75,7 @@ type viewData struct {
 	ExportMaxPosts                                       int
 	ExportMaxBytes, ExportBytes                          int64
 	UploaderID                                           int64
+	Invites                                              []archive.RegistrationInvite
 }
 
 func New(store *archive.Store, mediaRoot string) (*Server, error) {
@@ -88,12 +92,19 @@ func New(store *archive.Store, mediaRoot string) (*Server, error) {
 			}
 		}
 	}
-	return NewWithAuth(store, mediaRoot, AuthConfig{RPID: rpID, Origins: origins})
+	return NewWithAuth(store, mediaRoot, AuthConfig{RPID: rpID, Origins: origins, RegistrationMode: os.Getenv("KURA_REGISTRATION_MODE")})
 }
 
 func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Server, error) {
 	if err := validateAuthConfig(auth); err != nil {
 		return nil, err
+	}
+	registrationMode := auth.RegistrationMode
+	if registrationMode == "" {
+		registrationMode = string(RegistrationModeOpen)
+	}
+	if !validRegistrationMode(registrationMode) {
+		return nil, fmt.Errorf("invalid registration mode %q", registrationMode)
 	}
 	funcs := template.FuncMap{
 		"listCategories": func() []string { return []string{"artist", "character", "copyright", "general", "meta"} },
@@ -126,7 +137,19 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 		"passkeyDefault":   passkeyDefaultName,
 		"recoveryDetails":  recoveryDetails,
 		"recoveryFilename": recoveryDownloadFilename,
-		"postLink":         postLink,
+		"inviteStatus": func(invite archive.RegistrationInvite) string {
+			if invite.ConsumedAt != "" {
+				return "used"
+			}
+			if invite.RevokedAt != "" {
+				return "revoked"
+			}
+			if !invite.ExpiresAt.After(time.Now()) {
+				return "expired"
+			}
+			return "active"
+		},
+		"postLink": postLink,
 	}
 	t, err := template.New("base").Funcs(funcs).ParseFS(assets, "templates/*.html")
 	if err != nil {
@@ -154,7 +177,8 @@ func NewWithAuth(store *archive.Store, mediaRoot string, auth AuthConfig) (*Serv
 	}
 	return &Server{
 		store: store, mediaRoot: mediaRoot, media: ingestor, templates: t,
-		passkeys: goPasskeys{passkeys}, loginLimiter: newAttemptLimiter(5, time.Minute), recoveryLimiter: newAttemptLimiter(5, 5*time.Minute),
+		registrationMode: registrationMode,
+		passkeys:         goPasskeys{passkeys}, loginLimiter: newAttemptLimiter(5, time.Minute), recoveryLimiter: newAttemptLimiter(5, 5*time.Minute),
 	}, nil
 }
 
@@ -241,6 +265,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /uploads/{id}/delete", s.deleteUpload)
 	mux.HandleFunc("POST /uploads/{id}/permanent-delete", s.permanentDeleteUpload)
 	mux.HandleFunc("GET /admin/accounts", s.adminAccounts)
+	mux.HandleFunc("GET /admin/invites", s.adminInvites)
+	mux.HandleFunc("POST /admin/invites", s.createAdminInvite)
+	mux.HandleFunc("POST /admin/invites/{id}/revoke", s.revokeAdminInvite)
 	mux.HandleFunc("GET /admin/images", s.adminImages)
 	mux.HandleFunc("GET /admin/audit", s.adminAudit)
 	mux.HandleFunc("POST /admin/audit/{id}/revert", s.adminAuditRevert)
@@ -334,6 +361,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		data.User = session.User
 	}
 	data.CSRF = session.CSRF
+	if data.RegistrationMode == "" {
+		data.RegistrationMode = s.registrationMode
+	}
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, name, data); err != nil {
 		if name == "error" {

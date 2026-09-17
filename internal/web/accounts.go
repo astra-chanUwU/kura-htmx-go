@@ -16,13 +16,35 @@ func (s *Server) registerForm(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/account", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, "auth", viewData{Title: "Register — Kura", ActiveNav: "account", Next: "/account"})
+	token := r.URL.Query().Get("invite")
+	if err := s.registrationAllowed(r.Context(), token); err != nil {
+		s.respondFormError(w, r, "auth", registrationErrorStatus(err), viewData{Title: "Register — Kura", ActiveNav: "account", Next: "/account", Error: err.Error()})
+		return
+	}
+	s.render(w, r, "auth", viewData{Title: "Register — Kura", ActiveNav: "account", Next: "/account", InviteToken: token})
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	user, err := s.store.Register(r.Context(), r.FormValue("username"), r.FormValue("password"))
+	invite := r.FormValue("invite")
+	if err := s.registrationAllowed(r.Context(), invite); err != nil {
+		s.respondFormError(w, r, "auth", registrationErrorStatus(err), viewData{Title: "Register — Kura", ActiveNav: "account", Error: err.Error()})
+		return
+	}
+	var user archive.User
+	var err error
+	if invite != "" {
+		user, err = s.store.RegisterWithInvite(r.Context(), invite, r.FormValue("username"), r.FormValue("password"))
+	} else {
+		user, err = s.store.Register(r.Context(), r.FormValue("username"), r.FormValue("password"))
+	}
 	if err != nil {
-		s.render(w, r, "auth", viewData{Title: "Register — Kura", ActiveNav: "account", Error: "The registration details could not be accepted.", Next: "/account"})
+		message := "The registration details could not be accepted."
+		inviteForForm := invite
+		if errors.Is(err, archive.ErrInvalidRegistrationInvite) {
+			message = errRegistrationInviteInvalid.Error()
+			inviteForForm = ""
+		}
+		s.render(w, r, "auth", viewData{Title: "Register — Kura", ActiveNav: "account", Error: message, Next: "/account", InviteToken: inviteForForm})
 		return
 	}
 	if err = s.replaceSession(w, r, user.ID); err != nil {

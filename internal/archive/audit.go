@@ -97,6 +97,9 @@ var auditEventTypes = []string{
 	"suspension_change",
 	"super_admin_transfer",
 	"permanent_delete",
+	"invite_created",
+	"invite_revoked",
+	"invite_consumed",
 	"revert",
 }
 

@@ -291,6 +291,10 @@ func (s *Store) CreatePasskeyOnlyAccount(ctx context.Context, username, name str
 }
 
 func (s *Store) CreatePasskeyOnlyAccountWithHandle(ctx context.Context, username, name string, handle []byte, credential webauthn.Credential) (User, string, error) {
+	return s.CreatePasskeyAccountWithHandleAndPassword(ctx, username, name, handle, credential, "")
+}
+
+func (s *Store) CreatePasskeyAccountWithHandleAndPassword(ctx context.Context, username, name string, handle []byte, credential webauthn.Credential, passwordHash string) (User, string, error) {
 	username, err := normalizeUsername(username)
 	if err != nil {
 		return User{}, "", err
@@ -298,6 +302,9 @@ func (s *Store) CreatePasskeyOnlyAccountWithHandle(ctx context.Context, username
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 64 || len(handle) != 32 || len(credential.ID) == 0 || len(credential.PublicKey) == 0 {
 		return User{}, "", errors.New("invalid passkey account")
+	}
+	if passwordHash != "" && !strings.HasPrefix(passwordHash, "$argon2id$") {
+		return User{}, "", errors.New("invalid prepared password")
 	}
 	recovery, err := randomToken(24)
 	if err != nil {
@@ -312,7 +319,11 @@ func (s *Store) CreatePasskeyOnlyAccountWithHandle(ctx context.Context, username
 		return User{}, "", err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `INSERT INTO users(username,password_hash,webauthn_id) VALUES(?,NULL,?)`, username, handle)
+	var storedPassword any
+	if passwordHash != "" {
+		storedPassword = passwordHash
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO users(username,password_hash,webauthn_id) VALUES(?,?,?)`, username, storedPassword, handle)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return User{}, "", ErrUsernameTaken

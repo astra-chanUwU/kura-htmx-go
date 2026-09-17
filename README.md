@@ -12,7 +12,7 @@ Kura is a fast, self-hostable image archive: the density and directness of a boo
 
 ## Current vertical slice
 
-The current build includes public browsing/search, contextual previous/next navigation, local accounts with passwords and/or passkeys, one-use recovery codes, private favorites, owned draft/published pools, moderator/admin uploads and metadata tools with categorized tag entry/autocomplete, account/role administration, graceful error pages, individual downloads, and bounded portable ZIP exports. Viewers add images to pools from a post or through a searchable thumbnail picker with visual removal and ordering—database IDs never need to be entered. Uploads are hash-named beneath the configured media root, retain the submitted basename as metadata, thumbnails are generated during the request, and duplicate files are rejected before metadata is created. Published or otherwise authorized posts can be downloaded with either a readable tagged filename or a safe original-basename filename; selected visible browse results and authorized pools can be exported with original JPEG, PNG, or GIF bytes plus a complete `manifest.json`.
+The current build includes public browsing/search, contextual previous/next navigation, local accounts with passwords and/or passkeys, controlled open/closed/invite-only registration, one-use recovery codes, private favorites, owned draft/published pools, moderator/admin uploads and metadata tools with categorized tag entry/autocomplete, account/role administration, graceful error pages, individual downloads, and bounded portable ZIP exports. Viewers add images to pools from a post or through a searchable thumbnail picker with visual removal and ordering—database IDs never need to be entered. Uploads are hash-named beneath the configured media root, retain the submitted basename as metadata, thumbnails are generated during the request, and duplicate files are rejected before metadata is created. Published or otherwise authorized posts can be downloaded with either a readable tagged filename or a safe original-basename filename; selected visible browse results and authorized pools can be exported with original JPEG, PNG, or GIF bytes plus a complete `manifest.json`.
 
 Upload-capable accounts have a status-filtered **My uploads** view. An uploader can permanently delete their own post only after confirmation. An ordinary admin's cross-owner delete action quarantines the post instead; only the active super admin has server-wide image oversight and can inspect, restore, or permanently delete quarantined posts. Quarantined posts and media are excluded from normal browse, direct view, navigation, pools, favorites, downloads, and exports. Demoting a moderator or admin to viewer revokes their sessions and quarantines their non-deleted drafts; published uploads remain published, and promotion later does not restore quarantined drafts. Permanent deletion removes the database row, original, and thumbnail through private staging, rollback/reconciliation, and media-root containment, so the same SHA can be uploaded again.
 
@@ -39,6 +39,12 @@ Passkeys default to RP ID `localhost` and origin `http://localhost:8080`. For pr
 
 ```sh
 KURA_RP_ID='kura.example.com' KURA_ORIGINS='https://kura.example.com' go run ./cmd/kura -bootstrap-super-admin
+```
+
+Registration is open by default. Set `KURA_REGISTRATION_MODE=closed` to keep existing accounts, login, recovery, and first setup available while disabling public registration. Set `KURA_REGISTRATION_MODE=invite-only` to let the active super admin issue expiring, single-use viewer invitations from Admin → Invitations; the local invite URL/code is shown once and can be revoked before use. The stored invite is only a SHA-256 hash. For example:
+
+```sh
+KURA_REGISTRATION_MODE=invite-only KURA_RP_ID=localhost KURA_ORIGINS=http://localhost:8080 go run ./cmd/kura -addr 127.0.0.1:8080
 ```
 
 Passwords are 15–128 printable characters and are never trimmed or normalized. Usernames are 3–32 ASCII letters, digits, underscores, or hyphens, must begin/end alphanumerically, and compare case-insensitively. The account page manages named passkeys, password state, recovery-code replacement, and session revocation. A recovery code is shown only when generated or replaced; save it immediately in a password manager.

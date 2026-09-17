@@ -133,6 +133,7 @@
     if (button.dataset.name) input.name = document.querySelector(button.dataset.name)?.value || '';
     if (button.dataset.password) input.password = document.querySelector(button.dataset.password)?.value || '';
     if (button.dataset.recovery) input.recoveryCode = document.querySelector(button.dataset.recovery)?.value || '';
+    if (button.dataset.invite) input.invite = button.dataset.invite;
     const extraHeaders = button.dataset.token ? { 'X-Kura-Bootstrap': button.dataset.token } : {};
     button.disabled = true;
     const error = errorBox();
@@ -177,6 +178,15 @@
       link.download = panel?.dataset.recoveryFilename || recoveryDownloadFilename(username);
       link.click();
       URL.revokeObjectURL(link.href);
+    }
+    const copyInvite = event.target.closest('[data-copy-invite], [data-copy-invite-code]');
+    if (copyInvite) {
+      const value = copyInvite.matches('[data-copy-invite-code]')
+        ? document.querySelector('[data-invite-code]')?.textContent || ''
+        : document.querySelector('[data-invite-url]')?.href || '';
+      if (value && navigator.clipboard?.writeText) {
+        try { await navigator.clipboard.writeText(value); copyInvite.textContent = 'Copied'; } catch (_) { copyInvite.textContent = 'Copy failed'; }
+      }
     }
   });
 })();
