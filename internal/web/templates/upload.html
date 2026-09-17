@@ -7,13 +7,14 @@
     <p class="lede">JPEG, PNG, or GIF · maximum 32 MB · exact duplicates are rejected</p>
   </header>
   {{if .Error}}<p class="alert">{{.Error}}</p>{{end}}
+  {{if .BatchResults}}<section class="upload-results" aria-labelledby="upload-results-heading"><h2 id="upload-results-heading">Batch upload results</h2><ul>{{range .BatchResults}}<li><strong>{{.Filename}}</strong> — {{.Message}}{{if .PostID}} · <a href="/posts/{{.PostID}}">View {{.Status}}</a>{{end}}</li>{{end}}</ul></section>{{end}}
   <form method="post" action="/uploads" enctype="multipart/form-data" class="stack upload-form" id="upload-form">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <section class="upload-section">
       <label class="dropzone" id="dropzone">
         <strong>Image</strong>
-        <input type="file" name="image" id="image-input" accept="image/jpeg,image/png,image/gif" required>
-        <span>Choose, drop, or paste an image</span>
+        <input type="file" name="image" id="image-input" accept="image/jpeg,image/png,image/gif" multiple required>
+        <span>Choose, drop, or paste up to 20 images</span>
         <img id="preview" alt="Upload preview" hidden>
       </label>
     </section>
@@ -21,10 +22,11 @@
       <label>Tags <small>space-separated; use artist:, character:, copyright:, or meta: for new categorized tags; plain new tags are general</small>{{template "tag-autocomplete-input" .}}</label>
       <label>Source<input type="url" name="source" placeholder="https://…"></label>
       <label>Status<select name="status"><option value="published" selected>Published — visible immediately</option><option value="draft">Draft — review first</option></select></label>
+      <label id="batch-publish-option"><input type="checkbox" name="publish_batch" value="1"> Publish all images immediately (batch only)</label>
     </div>
     <button class="primary-action" type="submit">Store image</button>
   </form>
 </main>
-<script>(()=>{const input=document.querySelector('#image-input'),zone=document.querySelector('#dropzone'),preview=document.querySelector('#preview');function show(file){if(!file)return;preview.src=URL.createObjectURL(file);preview.hidden=false}input.addEventListener('change',()=>show(input.files[0]));zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('active')});zone.addEventListener('dragleave',()=>zone.classList.remove('active'));zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('active');if(e.dataTransfer.files[0]){input.files=e.dataTransfer.files;show(e.dataTransfer.files[0])}});document.addEventListener('paste',e=>{const file=[...e.clipboardData.files].find(f=>f.type.startsWith('image/'));if(file){const dt=new DataTransfer();dt.items.add(file);input.files=dt.files;show(file)}})})()</script>
+<script>(()=>{const input=document.querySelector('#image-input'),zone=document.querySelector('#dropzone'),preview=document.querySelector('#preview'),publish=document.querySelector('#batch-publish-option');function show(file){if(!file)return;preview.src=URL.createObjectURL(file);preview.hidden=false}function updateBatch(){publish.hidden=input.files.length<2}input.addEventListener('change',()=>{show(input.files[0]);updateBatch()});zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('active')});zone.addEventListener('dragleave',()=>zone.classList.remove('active'));zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('active');if(e.dataTransfer.files[0]){input.files=e.dataTransfer.files;show(e.dataTransfer.files[0]);updateBatch()}});document.addEventListener('paste',e=>{const file=[...e.clipboardData.files].find(f=>f.type.startsWith('image/'));if(file){const dt=new DataTransfer();dt.items.add(file);input.files=dt.files;show(file);updateBatch()}})})()</script>
 {{template "foot" .}}
 {{end}}

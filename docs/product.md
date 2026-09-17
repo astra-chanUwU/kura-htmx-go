@@ -11,9 +11,9 @@
 - Register and sign in with password, passkey-only, or both; recover locally without email; keep favorites private to each viewer.
 - Configure registration as open (default), closed, or invite-only. In invite-only mode, the active super admin issues bounded-expiry, single-use viewer invitations without email delivery.
 - Create owned pools as owner-only drafts or publicly visible collections; add from post pages or use a searchable thumbnail picker to select and reorder images.
-- Upload from file, drag/drop, or clipboard as a moderator or admin.
+- Upload from file, drag/drop, or clipboard as a moderator or admin; select up to 20 files for a synchronous batch.
 - Preview before publish; save drafts and publish deliberately.
-- Extract MIME type, dimensions, file size, and SHA-256; reject duplicates by hash.
+- Extract MIME type, dimensions, file size, and SHA-256; reject duplicates by hash. Batch members use the same source and tags, default to draft, and report created, duplicate, or validation-failure results independently; an explicit publish-all choice is available to upload-capable users.
 - Generate thumbnails on disk.
 - Moderate tags, sources, and draft/published state, including bounded bulk tag deltas with an explicit preview.
 - Enforce upload ownership for self-service changes, ordinary-admin quarantine of cross-owner uploads, and super-admin-only admin role changes.

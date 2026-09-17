@@ -99,3 +99,50 @@ func TestIngestWritesRelativeHashNamedFilesAndRejectsDuplicates(t *testing.T) {
 		t.Fatalf("soft deletion removed original media: %v", err)
 	}
 }
+
+func TestIngestRemovesMovedMediaWhenPostCreationFails(t *testing.T) {
+	root := t.TempDir()
+	store, err := archive.Open(filepath.Join(root, "kura.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.BootstrapSuperAdmin(context.Background(), "cleanup-moderator", "cleanup moderator password long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingestor := Ingestor{Root: filepath.Join(root, "media"), Store: store}
+	img := image.NewRGBA(image.Rect(0, 0, 12, 8))
+	var encoded bytes.Buffer
+	if err = png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ingestor.Ingest(context.Background(), uploadFile(t, encoded.Bytes()), &multipart.FileHeader{Filename: "cleanup.png"}, user, "", "", "invalid")
+	if err == nil {
+		t.Fatal("invalid status unexpectedly created a post")
+	}
+	var posts int
+	if err = store.DB.QueryRow("SELECT count(*) FROM posts").Scan(&posts); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 0 {
+		t.Fatalf("failed ingestion created %d posts", posts)
+	}
+	for _, directory := range []string{"originals", "thumbs"} {
+		matches, globErr := filepath.Glob(filepath.Join(ingestor.Root, directory, "*", "*", "*"))
+		if globErr != nil {
+			t.Fatal(globErr)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("failed ingestion left %s media: %v", directory, matches)
+		}
+	}
+	incoming, readErr := os.ReadDir(filepath.Join(ingestor.Root, ".incoming"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(incoming) != 0 {
+		t.Fatalf("failed ingestion left temporary files: %v", incoming)
+	}
+}

@@ -79,6 +79,7 @@ type viewData struct {
 	ExportMaxBytes, ExportBytes                          int64
 	UploaderID                                           int64
 	Invites                                              []archive.RegistrationInvite
+	BatchResults                                         []uploadResult
 }
 
 func New(store *archive.Store, mediaRoot string) (*Server, error) {
@@ -331,7 +332,7 @@ func (s *Server) withCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-				r.Body = http.MaxBytesReader(w, r.Body, mediafiles.MaxUploadBytes+(2<<20))
+				r.Body = http.MaxBytesReader(w, r.Body, mediafiles.MaxUploadRequestBytes)
 				_ = r.ParseMultipartForm(1 << 20)
 			} else {
 				_ = r.ParseForm()
@@ -342,6 +343,9 @@ func (s *Server) withCSRF(next http.Handler) http.Handler {
 				got = r.FormValue("csrf")
 			}
 			if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
+				if r.MultipartForm != nil {
+					_ = r.MultipartForm.RemoveAll()
+				}
 				s.respondError(w, r, http.StatusForbidden, "This form could not be verified. Please try again.")
 				return
 			}

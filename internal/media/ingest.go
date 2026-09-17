@@ -27,6 +27,8 @@ import (
 )
 
 const MaxUploadBytes = 32 << 20
+const MaxUploadCount = 20
+const MaxUploadRequestBytes = MaxUploadBytes*MaxUploadCount + (2 << 20)
 
 var ErrDuplicate = errors.New("this image is already in Kura")
 
@@ -303,22 +305,46 @@ func (i Ingestor) Ingest(ctx context.Context, file multipart.File, header *multi
 	if err != nil {
 		return archive.Post{}, err
 	}
-	if err = moveNoReplace(tempName, filepath.Join(i.Root, originalRel)); err != nil {
+	originalPath := filepath.Join(i.Root, originalRel)
+	thumbnailPath := filepath.Join(i.Root, thumbRel)
+	originalMoved := false
+	thumbnailMoved := false
+	defer func() {
+		if !originalMoved {
+			return
+		}
+		if !thumbnailMoved {
+			_ = os.Remove(originalPath)
+			return
+		}
+		_ = os.Remove(originalPath)
+		_ = os.Remove(thumbnailPath)
+	}()
+	if err = moveNoReplace(tempName, originalPath); err != nil {
 		return archive.Post{}, err
 	}
-	if err = moveNoReplace(thumbTempName, filepath.Join(i.Root, thumbRel)); err != nil {
+	originalMoved = true
+	if err = moveNoReplace(thumbTempName, thumbnailPath); err != nil {
 		return archive.Post{}, err
 	}
+	thumbnailMoved = true
 	post, err := i.Store.CreatePost(ctx, current, archive.NewPost{
 		Status: status, OriginalPath: filepath.ToSlash(originalRel), ThumbnailPath: filepath.ToSlash(thumbRel),
 		MIMEType: mimeType, Width: bounds.Dx(), Height: bounds.Dy(), ByteSize: written, SHA256: hash, Source: source, Tags: strings.Fields(tags),
 		OriginalFilename: uploadBasename(header),
 	})
 	if err != nil {
-		// Hash-named files are intentionally retained if metadata insertion fails;
-		// an explicit maintenance command can reconcile unreferenced media safely.
+		// CreatePost commits before reloading the created row. If that reload or
+		// this lookup has an uncertain outcome, retain the hash-named files so a
+		// committed row can never be left without its media.
+		if _, lookupErr := i.Store.PostIDByHash(context.WithoutCancel(ctx), hash); !errors.Is(lookupErr, sql.ErrNoRows) {
+			originalMoved = false
+			thumbnailMoved = false
+		}
 		return archive.Post{}, err
 	}
+	originalMoved = false
+	thumbnailMoved = false
 	_ = header
 	return post, nil
 }

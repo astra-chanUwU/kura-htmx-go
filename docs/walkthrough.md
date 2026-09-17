@@ -45,6 +45,8 @@ Each setup method requires a separate fresh database to test first-time enrollme
 ## 4. Upload and moderation
 
 - [ ] As `moderator_one`, choose a new JPEG/PNG/GIF from the supplied folder that is absent from the seed manifest. Check its preview, then upload it with tags and a source URL.
+- [ ] On the upload page, select or drop two or more JPEG/PNG/GIF files (no more than 20). Confirm the shared source and tags are applied to each created post, the batch defaults to Draft, and the per-file summary links created posts while identifying duplicates and invalid files without exposing internal paths.
+- [ ] Repeat a small batch with the explicit Publish all images immediately choice and confirm each successful post is published. Try selecting 21 files and confirm ingestion is rejected before any post is created.
 - [ ] Repeat using drag/drop and clipboard paste where your browser supports them.
 - [ ] Confirm the default Published selection makes the upload publicly visible. Upload another as Draft and check that signed-out visitors cannot access its page or media URL.
 - [ ] Reupload an exact seeded original from the manifest: it must report a duplicate without adding a post.
