@@ -27,9 +27,24 @@ func groupTags(tags []archive.Tag) map[string][]archive.Tag {
 	return m
 }
 
+func browseSort(r *http.Request) (string, error) {
+	sort := r.URL.Query().Get("sort")
+	if sort == "" {
+		return archive.SearchSortNewest, nil
+	}
+	if sort != archive.SearchSortNewest && sort != archive.SearchSortOldest {
+		return "", fmt.Errorf("%w: invalid sort", archive.ErrInvalidSearchQuery)
+	}
+	return sort, nil
+}
+
 func (s *Server) browseData(r *http.Request) (viewData, error) {
 	q := r.URL.Query().Get("q")
-	p, err := s.store.ListPosts(r.Context(), q, pageNumber(r), 24)
+	sort, err := browseSort(r)
+	if err != nil {
+		return viewData{}, err
+	}
+	p, err := s.store.ListPostsSorted(r.Context(), q, sort, pageNumber(r), 24)
 	if err != nil {
 		return viewData{}, err
 	}
@@ -41,13 +56,18 @@ func (s *Server) browseData(r *http.Request) (viewData, error) {
 	if encoded := r.URL.Query().Encode(); encoded != "" {
 		source += "?" + encoded
 	}
-	return viewData{Title: "Posts — Kura", ActiveNav: "posts", Page: p, Tags: tags, TagGroups: groupTags(tags), Query: p.Query, BulkSource: source, PostContext: browsePostContext(r), ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes}, nil
+	return viewData{Title: "Posts — Kura", ActiveNav: "posts", Page: p, Tags: tags, TagGroups: groupTags(tags), Query: p.Query, Sort: sort, BulkSource: source, PostContext: browsePostContext(r), ExportMaxPosts: archive.ExportMaxPosts, ExportMaxBytes: archive.ExportMaxBytes}, nil
 }
 
 func (s *Server) posts(w http.ResponseWriter, r *http.Request) {
 	data, err := s.browseData(r)
 	if err != nil {
-		s.respondError(w, r, http.StatusInternalServerError, "")
+		status := http.StatusInternalServerError
+		message := ""
+		if errors.Is(err, archive.ErrInvalidSearchQuery) {
+			status, message = http.StatusBadRequest, "Search query or sort is invalid."
+		}
+		s.respondError(w, r, status, message)
 		return
 	}
 	s.render(w, r, "posts", data)
@@ -56,7 +76,12 @@ func (s *Server) posts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) grid(w http.ResponseWriter, r *http.Request) {
 	data, err := s.browseData(r)
 	if err != nil {
-		s.respondError(w, r, http.StatusInternalServerError, "")
+		status := http.StatusInternalServerError
+		message := ""
+		if errors.Is(err, archive.ErrInvalidSearchQuery) {
+			status, message = http.StatusBadRequest, "Search query or sort is invalid."
+		}
+		s.respondError(w, r, status, message)
 		return
 	}
 	s.render(w, r, "browse-fragment", data)

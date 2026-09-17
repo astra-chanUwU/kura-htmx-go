@@ -178,33 +178,28 @@ func CurrentMigrationVersions() []string {
 	return versions
 }
 
-func normalizeQuery(q string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, t := range strings.Fields(strings.ToLower(q)) {
-		t = strings.Trim(t, "#,")
-		if t != "" && !seen[t] {
-			seen[t] = true
-			out = append(out, t)
-		}
-	}
-	return out
+func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) (PostPage, error) {
+	return s.ListPostsSorted(ctx, query, SearchSortNewest, page, perPage)
 }
 
-func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) (PostPage, error) {
+func (s *Store) ListPostsSorted(ctx context.Context, query, sort string, page, perPage int) (PostPage, error) {
 	if page < 1 {
 		page = 1
 	}
 	if perPage < 1 || perPage > 100 {
 		perPage = 24
 	}
-	tags := normalizeQuery(query)
+	search, err := ParseSearchQuery(query)
+	if err != nil {
+		return PostPage{}, err
+	}
+	order, err := searchOrder(sort)
+	if err != nil {
+		return PostPage{}, err
+	}
 	where := `p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL`
 	args := []any{}
-	for _, tag := range tags {
-		where += ` AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=?)`
-		args = append(args, tag)
-	}
+	where, args = searchPredicates(where, args, search)
 	var total int
 	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts p WHERE `+where, args...).Scan(&total); err != nil {
 		return PostPage{}, err
@@ -217,12 +212,12 @@ func (s *Store) ListPosts(ctx context.Context, query string, page, perPage int) 
 		page = pages
 	}
 	qargs := append(append([]any{}, args...), perPage, (page-1)*perPage)
-	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM posts p WHERE `+where+` ORDER BY p.published_at DESC,p.id DESC LIMIT ? OFFSET ?`, qargs...)
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id,p.status,p.original_path,p.thumbnail_path,p.mime_type,p.width,p.height,p.byte_size,p.sha256,p.source,COALESCE(p.published_at,'') FROM posts p WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, qargs...)
 	if err != nil {
 		return PostPage{}, err
 	}
 	defer rows.Close()
-	result := PostPage{Total: total, Page: page, PerPage: perPage, Pages: pages, Query: strings.Join(tags, " ")}
+	result := PostPage{Total: total, Page: page, PerPage: perPage, Pages: pages, Query: search.String()}
 	for rows.Next() {
 		var p Post
 		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt); err != nil {
@@ -349,7 +344,10 @@ func (s *Store) PoolCandidates(ctx context.Context, filter PoolCandidateFilter) 
 	if source == "" {
 		source = "all"
 	}
-	tags := normalizeQuery(filter.Query)
+	search, err := ParseSearchQuery(filter.Query)
+	if err != nil {
+		return PostPage{}, err
+	}
 	from := "posts p"
 	where := `p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL`
 	args := []any{}
@@ -374,10 +372,7 @@ func (s *Store) PoolCandidates(ctx context.Context, filter PoolCandidateFilter) 
 	default:
 		return PostPage{}, errors.New("invalid pool candidate source")
 	}
-	for _, tag := range tags {
-		where += ` AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=?)`
-		args = append(args, tag)
-	}
+	where, args = searchPredicates(where, args, search)
 	var total int
 	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM `+from+` WHERE `+where, args...).Scan(&total); err != nil {
 		return PostPage{}, err
@@ -395,7 +390,7 @@ func (s *Store) PoolCandidates(ctx context.Context, filter PoolCandidateFilter) 
 		return PostPage{}, err
 	}
 	defer rows.Close()
-	result := PostPage{Total: total, Page: filter.Page, PerPage: filter.PerPage, Pages: pages, Query: strings.Join(tags, " ")}
+	result := PostPage{Total: total, Page: filter.Page, PerPage: filter.PerPage, Pages: pages, Query: search.String()}
 	for rows.Next() {
 		var p Post
 		if err = rows.Scan(&p.ID, &p.Status, &p.OriginalPath, &p.ThumbnailPath, &p.MIMEType, &p.Width, &p.Height, &p.ByteSize, &p.SHA256, &p.Source, &p.PublishedAt); err != nil {

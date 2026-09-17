@@ -154,6 +154,10 @@ func (s *Server) poolPicker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if errors.Is(err, archive.ErrInvalidSearchQuery) {
+			s.respondError(w, r, http.StatusBadRequest, "Search query is invalid.")
+			return
+		}
 		s.respondError(w, r, http.StatusInternalServerError, "")
 		return
 	}

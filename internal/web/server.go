@@ -43,6 +43,7 @@ type Server struct {
 
 type viewData struct {
 	Title, ActiveNav, Query, Error, Notice, Next, Status string
+	Sort                                                 string
 	ErrorHeading                                         string
 	ErrorStatus                                          int
 	RegistrationMode                                     string

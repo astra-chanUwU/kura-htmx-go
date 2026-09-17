@@ -12,6 +12,7 @@ import (
 type postContext struct {
 	Source     string
 	Query      string
+	Sort       string
 	PoolSlug   string
 	Status     string
 	UploaderID int64
@@ -19,7 +20,11 @@ type postContext struct {
 }
 
 func browsePostContext(r *http.Request) postContext {
-	return postContext{Source: "browse", Query: r.URL.Query().Get("q"), Page: pageNumber(r)}
+	sort, err := browseSort(r)
+	if err != nil {
+		sort = archive.SearchSortNewest
+	}
+	return postContext{Source: "browse", Query: r.URL.Query().Get("q"), Sort: sort, Page: pageNumber(r)}
 }
 
 func poolPostContext(slug string) postContext {
@@ -46,7 +51,14 @@ func parsePostContext(r *http.Request) postContext {
 		if !ok {
 			return context
 		}
-		context.Query, context.Page = query.Get("q"), page
+		sort := query.Get("sort")
+		if sort == "" {
+			sort = archive.SearchSortNewest
+		}
+		if sort != archive.SearchSortNewest && sort != archive.SearchSortOldest {
+			return context
+		}
+		context.Query, context.Sort, context.Page = query.Get("q"), sort, page
 	case "pool":
 		slug := query.Get("pool")
 		if !validPoolSlug(slug) {
@@ -115,7 +127,7 @@ func validPoolSlug(slug string) bool {
 }
 
 func (c postContext) archive() archive.PostNavigationContext {
-	return archive.PostNavigationContext{Source: c.Source, Query: c.Query, PoolSlug: c.PoolSlug, Status: c.Status, UploaderID: c.UploaderID}
+	return archive.PostNavigationContext{Source: c.Source, Query: c.Query, Sort: c.Sort, PoolSlug: c.PoolSlug, Status: c.Status, UploaderID: c.UploaderID}
 }
 
 func (c postContext) values() url.Values {
@@ -128,6 +140,9 @@ func (c postContext) values() url.Values {
 		}
 		if c.Page > 1 {
 			values.Set("page", strconv.Itoa(c.Page))
+		}
+		if c.Sort == archive.SearchSortOldest {
+			values.Set("sort", c.Sort)
 		}
 	case "pool":
 		values.Set("pool", c.PoolSlug)

@@ -7,9 +7,9 @@
 {{define "browse-fragment"}}
 <div class="browse">
 <aside class="tagrail">
-<form class="searchbar" action="/posts"><label class="visually-hidden" for="q">Search tags</label><div class="search-controls"><input id="q" name="q" value="{{.Query}}" placeholder="search tags…"><button class="search-submit">Go</button></div></form>
+<form class="searchbar" action="/posts"><label class="visually-hidden" for="q">Search tags</label><div class="search-controls"><input id="q" name="q" value="{{.Query}}" placeholder="search tags…" title="Space-separated tags; - excludes; category:name filters a category"><label for="sort">Sort</label><select id="sort" name="sort"><option value="newest"{{if eq .Sort "newest"}} selected{{end}}>Newest</option><option value="oldest"{{if eq .Sort "oldest"}} selected{{end}}>Oldest</option></select><button class="search-submit">Go</button></div></form>
 <h2>Tags</h2>
-{{range $category := (listCategories)}}{{with index $.TagGroups $category}}<section class="{{$category}}"><h3>{{$category}}</h3>{{range .}}<a href="/posts?q={{queryEscape .Name}}" hx-get="/posts/grid?q={{queryEscape .Name}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape .Name}}"><span>{{.DisplayName}}</span><small>{{.Count}}</small></a>{{end}}</section>{{end}}{{end}}
+{{range $category := (listCategories)}}{{with index $.TagGroups $category}}<section class="{{$category}}"><h3>{{$category}}</h3>{{range .}}<a href="/posts?q={{queryEscape (tagLabel .)}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}" hx-get="/posts/grid?q={{queryEscape (tagLabel .)}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape (tagLabel .)}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}"><span>{{.DisplayName}}</span><small>{{.Count}}</small></a>{{end}}</section>{{end}}{{end}}
 </aside>
 <section class="results">
 <div class="result-head"><b>{{.Page.Total}} posts</b>{{if .Query}}<span>matching “{{.Query}}”</span>{{end}}</div>
@@ -34,4 +34,4 @@
 </section>
 {{end}}
 
-{{define "pagination"}}{{if gt .Page.Pages 1}}<nav class="pagination" aria-label="Pages">{{range seq .Page.Pages}}<a {{if eq . $.Page.Page}}aria-current="page"{{end}} href="/posts?q={{queryEscape $.Query}}&page={{.}}" hx-get="/posts/grid?q={{queryEscape $.Query}}&page={{.}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape $.Query}}&page={{.}}">{{.}}</a>{{end}}</nav>{{end}}{{end}}
+{{define "pagination"}}{{if gt .Page.Pages 1}}<nav class="pagination" aria-label="Pages">{{range seq .Page.Pages}}<a {{if eq . $.Page.Page}}aria-current="page"{{end}} href="/posts?q={{queryEscape $.Query}}&page={{.}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}" hx-get="/posts/grid?q={{queryEscape $.Query}}&page={{.}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape $.Query}}&page={{.}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}">{{.}}</a>{{end}}</nav>{{end}}{{end}}

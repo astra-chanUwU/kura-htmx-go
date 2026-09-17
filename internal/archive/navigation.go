@@ -11,6 +11,7 @@ var ErrNavigationUnavailable = errors.New("post navigation context is unavailabl
 type PostNavigationContext struct {
 	Source     string
 	Query      string
+	Sort       string
 	PoolSlug   string
 	Status     string
 	UploaderID int64
@@ -27,7 +28,7 @@ func (s *Store) PostNeighbors(ctx context.Context, currentID, viewerID int64, na
 	}
 	switch navigation.Source {
 	case "browse":
-		return s.browseNeighbors(ctx, currentID, navigation.Query)
+		return s.browseNeighbors(ctx, currentID, navigation.Query, navigation.Sort)
 	case "pool":
 		return s.poolNeighbors(ctx, currentID, viewerID, navigation.PoolSlug)
 	case "uploads":
@@ -39,13 +40,20 @@ func (s *Store) PostNeighbors(ctx context.Context, currentID, viewerID int64, na
 	}
 }
 
-func (s *Store) browseNeighbors(ctx context.Context, currentID int64, query string) (PostNavigation, error) {
+func (s *Store) browseNeighbors(ctx context.Context, currentID int64, query, sort string) (PostNavigation, error) {
+	search, err := ParseSearchQuery(query)
+	if err != nil {
+		return PostNavigation{}, ErrNavigationUnavailable
+	}
+	if sort == "" {
+		sort = SearchSortNewest
+	}
+	if sort != SearchSortNewest && sort != SearchSortOldest {
+		return PostNavigation{}, ErrNavigationUnavailable
+	}
 	where := `p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL`
 	args := []any{}
-	for _, tag := range normalizeQuery(query) {
-		where += ` AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=?)`
-		args = append(args, tag)
-	}
+	where, args = searchPredicates(where, args, search)
 	var publishedAt string
 	currentArgs := append([]any{currentID}, args...)
 	if err := s.DB.QueryRowContext(ctx, `SELECT COALESCE(p.published_at,'') FROM posts p WHERE p.id=? AND `+where, currentArgs...).Scan(&publishedAt); errors.Is(err, sql.ErrNoRows) {
@@ -55,7 +63,16 @@ func (s *Store) browseNeighbors(ctx context.Context, currentID int64, query stri
 	}
 	previousArgs := append(append([]any{}, args...), publishedAt, publishedAt, currentID)
 	var previous int64
-	err := s.DB.QueryRowContext(ctx, `SELECT p.id FROM posts p WHERE `+where+` AND (p.published_at>? OR (p.published_at=? AND p.id>?)) ORDER BY p.published_at ASC,p.id ASC LIMIT 1`, previousArgs...).Scan(&previous)
+	previousSQL := `SELECT p.id FROM posts p WHERE ` + where
+	nextSQL := `SELECT p.id FROM posts p WHERE ` + where
+	if sort == SearchSortOldest {
+		previousSQL += ` AND (p.published_at<? OR (p.published_at=? AND p.id<?)) ORDER BY p.published_at DESC,p.id DESC LIMIT 1`
+		nextSQL += ` AND (p.published_at>? OR (p.published_at=? AND p.id>?)) ORDER BY p.published_at ASC,p.id ASC LIMIT 1`
+	} else {
+		previousSQL += ` AND (p.published_at>? OR (p.published_at=? AND p.id>?)) ORDER BY p.published_at ASC,p.id ASC LIMIT 1`
+		nextSQL += ` AND (p.published_at<? OR (p.published_at=? AND p.id<?)) ORDER BY p.published_at DESC,p.id DESC LIMIT 1`
+	}
+	err = s.DB.QueryRowContext(ctx, previousSQL, previousArgs...).Scan(&previous)
 	if errors.Is(err, sql.ErrNoRows) {
 		previous = 0
 	} else if err != nil {
@@ -63,7 +80,7 @@ func (s *Store) browseNeighbors(ctx context.Context, currentID int64, query stri
 	}
 	nextArgs := append(append([]any{}, args...), publishedAt, publishedAt, currentID)
 	var next int64
-	err = s.DB.QueryRowContext(ctx, `SELECT p.id FROM posts p WHERE `+where+` AND (p.published_at<? OR (p.published_at=? AND p.id<?)) ORDER BY p.published_at DESC,p.id DESC LIMIT 1`, nextArgs...).Scan(&next)
+	err = s.DB.QueryRowContext(ctx, nextSQL, nextArgs...).Scan(&next)
 	if errors.Is(err, sql.ErrNoRows) {
 		next = 0
 	} else if err != nil {

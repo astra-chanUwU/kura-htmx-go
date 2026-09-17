@@ -3,7 +3,7 @@
 ## V1 features
 
 - Browse a compact, responsive thumbnail grid.
-- Search by tags and combine tags with space-separated AND semantics.
+- Search by tags with space-separated AND semantics, excluded tags (`-spoiler`), category filters (`artist:name`, `character:name`, `copyright:name`, `general:name`, or `meta:name`), and bounded newest/oldest sorting.
 - Browse categorized tags: artist, character, copyright, general, and meta.
 - Open post detail pages with image metadata, source, tags, pool membership, and previous/next keyboard navigation.
 - Jump to a random published post.
@@ -75,4 +75,4 @@ The implemented vertical slice covers browsing, identity, role boundaries, uploa
 | `POST /admin/images/{id}/restore` | Super-admin restore to the pre-quarantine draft/published state |
 | `POST /admin/images/{id}/permanent-delete` | Confirmation-gated super-admin permanent deletion |
 
-Query syntax in v1 is intentionally small: normalized tag names separated by spaces mean AND. A later syntax must earn its parsing and UI cost.
+Query syntax in v1 is intentionally small: normalized tag names separated by spaces mean AND; a leading `-` excludes a tag; and an explicit `category:name` term restricts the match to one of the five stored categories. The `sort` query parameter accepts only `newest` (the default) or `oldest`; `/random` remains a separate route. Unknown categories, empty category terms, contradictory include/exclude terms, malformed terms, and unsupported sort values are rejected instead of broadening the result set. A later syntax must earn its parsing and UI cost.

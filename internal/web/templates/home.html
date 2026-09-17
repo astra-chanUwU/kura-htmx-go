@@ -3,7 +3,7 @@
 <div class="home-shell">
 <img class="booru-banner" src="/static/images/kura-banner.png" width="1634" height="962" alt="Kura angel mascot">
 <div class="home-links"><a href="/posts">Browse</a><a href="/pools">Pools</a><a href="/random">Random</a>{{if .User}}<a href="/account">{{.User.Username}}</a>{{else}}<a href="/login">Sign in</a>{{end}}<button class="home-theme-toggle" type="button" data-theme-toggle aria-label="Light theme" aria-pressed="false" hidden>Light theme</button></div>
-<form action="/posts" class="hero-search"><label class="visually-hidden" for="home-q">Search posts</label><div><input id="home-q" name="q" placeholder="space-separated tags" autofocus><button>Search</button></div></form>
+<form action="/posts" class="hero-search"><label class="visually-hidden" for="home-q">Search posts</label><div><input id="home-q" name="q" placeholder="tags, -excluded, category:name" autofocus><button>Search</button></div></form>
 <section class="home-stats" aria-label="Kura archive details">
 <p class="home-count">48 posts indexed</p>
 <div class="home-tech" aria-hidden="true"><img src="/static/images/mascot-4.gif" alt=""><img src="/static/images/mascot-9.gif" alt=""><img src="/static/images/mascot-5.gif" alt=""><img src="/static/images/mascot-2.gif" alt=""><img src="/static/images/mascot-0.gif" alt=""></div>

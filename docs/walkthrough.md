@@ -20,6 +20,8 @@ Each setup method requires a separate fresh database to test first-time enrollme
 
 - [ ] Sign out. Check home, the post grid, post details, and the public collection.
 - [ ] Search `walkthrough`, `jpeg`, `png`, and `gif`; search `anime scene` to check that both tags are required. Try mixed case and extra spaces.
+- [ ] Search `anime -spoiler` and confirm excluded tags remove matching posts; try `artist:name` or another category prefix and confirm only that category matches. Use the Sort control to switch between newest (default) and oldest, then verify pagination, HTMX refreshes, selected exports, bulk-tag selection, and post Back/Previous/Next links retain both `q` and `sort`.
+- [ ] Try an unknown category (`unknown:name`), empty category (`artist:`), contradictory terms (`cat -cat`), and an unsupported `sort` value; each must reject the request without falling back to an unfiltered browse.
 - [ ] Try a nonexistent tag and confirm a useful empty result.
 - [ ] Open an image: check dimensions, size, tags, original image, and thumbnail. Check GIF animation on its detail page.
 - [ ] Open an image from public browse/search, a pool, My uploads, and (as super admin) Admin → Images. Confirm each detail page shows validated Previous, Next, and Back controls for that source ordering; first/last images disable the unavailable direction.
