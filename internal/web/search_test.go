@@ -23,6 +23,14 @@ func TestBrowseSearchSortAndHTMXPreserveContext(t *testing.T) {
 	if page.Code != http.StatusOK || !strings.Contains(body, `option value="oldest" selected`) || !strings.Contains(body, `hx-get="/posts/grid?`) || !strings.Contains(body, `sort=oldest`) || !strings.Contains(body, `page=2`) {
 		t.Fatalf("browse search/sort context was not rendered: status=%d body=%s", page.Code, body)
 	}
+	queryRow := strings.Index(body, `class="search-query-row"`)
+	sortRow := strings.Index(body, `class="search-sort-row"`)
+	if queryRow < 0 || sortRow < 0 || queryRow > sortRow || !strings.Contains(body[queryRow:sortRow], `name="q"`) || !strings.Contains(body[sortRow:], `name="sort"`) || !strings.Contains(body[sortRow:], `class="search-submit"`) {
+		t.Fatalf("browse search controls lack semantic query/sort rows: status=%d body=%s", page.Code, body)
+	}
+	if !strings.Contains(body, `data-tag-categories`) || !strings.Contains(body, `data-tag-categories open`) || !strings.Contains(body, `>Filter by tags</summary>`) {
+		t.Fatalf("browse tag categories lack disclosure grouping: status=%d body=%s", page.Code, body)
+	}
 	detail := searchRequest(t, server.Handler(), "/posts/1?context=browse&q="+query+"&sort=oldest", false)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "sort=oldest") {
 		t.Fatalf("post context did not preserve oldest sort: status=%d body=%s", detail.Code, detail.Body.String())

@@ -7,9 +7,11 @@
 {{define "browse-fragment"}}
 <div class="browse">
 <aside class="tagrail">
-<form class="searchbar" action="/posts"><label class="visually-hidden" for="q">Search tags</label><div class="search-controls"><input id="q" name="q" value="{{.Query}}" placeholder="search tags…" title="Space-separated tags; - excludes; category:name filters a category"><label for="sort">Sort</label><select id="sort" name="sort"><option value="newest"{{if eq .Sort "newest"}} selected{{end}}>Newest</option><option value="oldest"{{if eq .Sort "oldest"}} selected{{end}}>Oldest</option></select><button class="search-submit">Go</button></div></form>
+<form class="searchbar" action="/posts"><div class="search-controls"><div class="search-query-row"><label class="visually-hidden" for="q">Search tags</label><input id="q" name="q" value="{{.Query}}" placeholder="search tags…" title="Space-separated tags; - excludes; category:name filters a category"></div><div class="search-sort-row"><label for="sort">Sort</label><select id="sort" name="sort"><option value="newest"{{if eq .Sort "newest"}} selected{{end}}>Newest</option><option value="oldest"{{if eq .Sort "oldest"}} selected{{end}}>Oldest</option></select><button class="search-submit">Go</button></div></div></form>
 <h2>Tags</h2>
+<details class="tag-categories" data-tag-categories open><summary>Filter by tags</summary>
 {{range $category := (listCategories)}}{{with index $.TagGroups $category}}<section class="{{$category}}"><h3>{{$category}}</h3>{{range .}}<a href="/posts?q={{queryEscape (tagLabel .)}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}" hx-get="/posts/grid?q={{queryEscape (tagLabel .)}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}" hx-target="#browse" hx-push-url="/posts?q={{queryEscape (tagLabel .)}}{{if eq $.Sort "oldest"}}&sort=oldest{{end}}"><span>{{.DisplayName}}</span><small>{{.Count}}</small></a>{{end}}</section>{{end}}{{end}}
+</details>
 </aside>
 <section class="results">
 <div class="result-head"><b>{{.Page.Total}} posts</b>{{if .Query}}<span>matching “{{.Query}}”</span>{{end}}</div>
@@ -23,14 +25,13 @@
 
 {{define "export-toolbar"}}
 <section class="export-toolbar" data-selection-toolbar>
-<div class="bulk-selection-head"><b><span data-selection-count>0</span> selected</b><small><span data-selection-bytes>0 B</span> · {{.ExportMaxPosts}} images / {{humanBytes .ExportMaxBytes}} maximum</small><button type="button" data-selection-select-page>Select this page</button><button type="button" data-selection-clear>Clear</button></div>
-<form method="get" action="/posts/export" class="export-form" data-export-form><button type="submit" name="name" value="tagged" data-export-submit disabled>Tagged ZIP</button><button type="submit" name="name" value="original" data-export-submit disabled>Original-name ZIP</button></form>
+<div class="bulk-selection-head"><div class="bulk-selection-status" data-selection-status aria-live="polite"><b><span data-selection-count>0</span> selected</b><small><span data-selection-bytes>0 B</span> · {{.ExportMaxPosts}} images / {{humanBytes .ExportMaxBytes}} maximum</small></div><button type="button" data-selection-select-page>Select this page</button><div class="bulk-selection-actions" data-selection-actions><button type="button" data-selection-clear>Clear</button><form method="get" action="/posts/export" class="export-form" data-export-form><button type="submit" name="name" value="tagged" data-export-submit disabled>Tagged ZIP</button><button type="submit" name="name" value="original" data-export-submit disabled>Original-name ZIP</button></form></div></div>
 </section>
 {{end}}
 
 {{define "bulk-tag-toolbar"}}
 <section class="bulk-tag-toolbar" data-bulk-toolbar>
-<small>Bulk tags: 24 posts maximum</small><form method="post" action="/posts/bulk-tags/preview" class="bulk-tag-form" data-bulk-form><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="source" value="{{.BulkSource}}"><label>Add tags<div class="tag-autocomplete"><input name="add_tags" placeholder="artist:sample_artist black_hair" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-add-suggestions" data-tag-autocomplete><div id="bulk-add-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><label>Remove tags<div class="tag-autocomplete"><input name="remove_tags" placeholder="tags to remove" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-remove-suggestions" data-tag-autocomplete><div id="bulk-remove-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><button type="submit" data-bulk-preview disabled>Preview changes</button></form>
+<details data-bulk-editor><summary>Edit tags</summary><small>Bulk tags: 24 posts maximum</small><form method="post" action="/posts/bulk-tags/preview" class="bulk-tag-form" data-bulk-form><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="source" value="{{.BulkSource}}"><label>Add tags<div class="tag-autocomplete"><input name="add_tags" placeholder="artist:sample_artist black_hair" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-add-suggestions" data-tag-autocomplete><div id="bulk-add-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><label>Remove tags<div class="tag-autocomplete"><input name="remove_tags" placeholder="tags to remove" autocomplete="off" aria-autocomplete="list" aria-controls="bulk-remove-suggestions" data-tag-autocomplete><div id="bulk-remove-suggestions" class="tag-suggestions" role="listbox" hidden></div></div></label><button type="submit" data-bulk-preview disabled>Review tag changes</button></form></details>
 </section>
 {{end}}
 

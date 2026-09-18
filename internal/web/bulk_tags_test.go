@@ -12,7 +12,7 @@ import (
 	"kura/internal/archive"
 )
 
-func TestBulkTagControlsAreEditorOnlyAndBoundToVisibleBrowseResults(t *testing.T) {
+func TestBulkTagControlsRespectRole(t *testing.T) {
 	server, store := testServer(t)
 	ctx := context.Background()
 	admin, err := store.BootstrapSuperAdmin(ctx, "bulk-ui-admin", "bulk ui admin password")
@@ -34,7 +34,13 @@ func TestBulkTagControlsAreEditorOnlyAndBoundToVisibleBrowseResults(t *testing.T
 	adminSession, _ := store.NewSession(ctx, &admin.ID)
 	adminPage := sessionRequest(t, handler, http.MethodGet, "/posts", nil, adminSession)
 	body := adminPage.Body.String()
-	if adminPage.Code != http.StatusOK || !strings.Contains(body, "bulk-tag-toolbar") || !strings.Contains(body, `data-bulk-post="`+strconv.FormatInt(post.ID, 10)+`"`) || !strings.Contains(body, "Select this page") || !strings.Contains(body, "24 posts maximum") {
+	selectionStatus := strings.Index(body, `data-selection-status`)
+	selectionActions := strings.Index(body, `data-selection-actions`)
+	selectPage := strings.Index(body, `data-selection-select-page`)
+	clearSelection := strings.Index(body, `data-selection-clear`)
+	bulkEditor := strings.Index(body, `data-bulk-editor`)
+	bulkForm := strings.Index(body, `data-bulk-form`)
+	if adminPage.Code != http.StatusOK || !strings.Contains(body, "bulk-tag-toolbar") || !strings.Contains(body, `data-bulk-post="`+strconv.FormatInt(post.ID, 10)+`"`) || !strings.Contains(body, "Select this page") || !strings.Contains(body, "24 posts maximum") || selectionStatus < 0 || selectionActions < 0 || selectionStatus > selectionActions || !strings.Contains(body[selectionStatus:selectionActions], `aria-live="polite"`) || !strings.Contains(body[selectionStatus:selectionActions], `data-selection-count`) || selectPage < 0 || selectPage > selectionActions || clearSelection < selectionActions || !strings.Contains(body[selectionActions:], `data-export-form`) || !strings.Contains(body[selectionActions:], `data-export-submit`) || bulkEditor < 0 || bulkForm < bulkEditor || !strings.Contains(body, ">Edit tags</summary>") || !strings.Contains(body, "Review tag changes") {
 		t.Fatalf("editor browse page lacks bounded bulk controls: status=%d body=%s", adminPage.Code, body)
 	}
 	viewerSession, _ := store.NewSession(ctx, &viewer.ID)
@@ -127,7 +133,7 @@ func TestBulkTagApplySupportsHTMXAndOrdinaryRedirect(t *testing.T) {
 	}
 }
 
-func TestBulkSelectionResetsOnHTMXHistoryRestore(t *testing.T) {
+func TestBulkSelectionScriptResetsRestoredHistory(t *testing.T) {
 	server, _ := testServer(t)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/bulk-selection.js", nil))
@@ -138,7 +144,27 @@ func TestBulkSelectionResetsOnHTMXHistoryRestore(t *testing.T) {
 	resetCallback := strings.Index(body, "const restore=")
 	popstate := strings.Index(body, "popstate")
 	pageshow := strings.Index(body, "pageshow")
+	selectedCardSync := strings.Contains(body, "dataset.selected")
+	contextualActionsSync := strings.Contains(body, "selectionActions.hidden=selected.length===0")
+	bulkDisclosureSync := strings.Contains(body, "bulkEditor.hidden=selected.length===0") && strings.Contains(body, "bulkEditor.open=false")
+	rangeSelection := strings.Contains(body, "event.shiftKey") && strings.Contains(body, "lastChanged") && strings.Contains(body, "visibleBoxes.slice")
+	tagDisclosureSync := strings.Contains(body, "matchMedia('(max-width:700px)')") && strings.Contains(body, "details.open=open") && strings.Contains(body, "addEventListener('change',syncTagDisclosure)")
 	if response.Code != http.StatusOK || beforeHistorySave < 0 || historyRestore < 0 || restored < 0 || popstate < 0 || pageshow < 0 || resetCallback < 0 || !strings.Contains(body[resetCallback:], "reset();bind();syncSelection()") || !strings.Contains(body[popstate:], "setTimeout(restore,0)") {
 		t.Fatalf("bulk selection script does not reset restored history state: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !selectedCardSync {
+		t.Fatal("selected-card state is not synchronized after checkbox changes")
+	}
+	if !contextualActionsSync {
+		t.Fatal("selection actions are not hidden at zero selection")
+	}
+	if !bulkDisclosureSync {
+		t.Fatal("bulk disclosure is not closed after selection is cleared")
+	}
+	if !rangeSelection {
+		t.Fatal("Shift-click does not select the contiguous visible range")
+	}
+	if !tagDisclosureSync {
+		t.Fatal("tag disclosure does not synchronize its open state with the responsive breakpoint")
 	}
 }
