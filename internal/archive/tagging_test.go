@@ -3,6 +3,8 @@ package archive
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +95,48 @@ func TestTagSuggestionsRequireCurrentModerator(t *testing.T) {
 	}
 	if _, err = store.TagSuggestions(ctx, viewer, "sample"); !errors.Is(err, ErrPermission) {
 		t.Fatalf("viewer suggestion query error = %v, want ErrPermission", err)
+	}
+}
+
+func TestPublicTagSuggestionsRespectVisibilityCategoryAndLimit(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		addPost(t, store, fmt.Sprintf("public-suggestion-%02d", i), "published", fmt.Sprintf("needle_%02d", i))
+	}
+	addPost(t, store, "public-suggestion-artist", "published", "needle_artist")
+	if _, err := store.DB.Exec(`UPDATE tags SET category='artist' WHERE name='needle_artist'`); err != nil {
+		t.Fatal(err)
+	}
+	addPost(t, store, "public-suggestion-draft", "draft", "secret_draft")
+	addPost(t, store, "public-suggestion-quarantine", "published", "secret_quarantine")
+	addPost(t, store, "public-suggestion-deleted", "published", "secret_deleted")
+	if _, err := store.DB.Exec(`UPDATE posts SET quarantined_at=CURRENT_TIMESTAMP WHERE sha256='public-suggestion-quarantine'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB.Exec(`UPDATE posts SET deleted_at=CURRENT_TIMESTAMP WHERE sha256='public-suggestion-deleted'`); err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := store.PublicTagSuggestions(ctx, "needle")
+	if err != nil || len(tags) != tagSuggestionLimit {
+		t.Fatalf("public suggestions returned %d tags, err=%v; want %d", len(tags), err, tagSuggestionLimit)
+	}
+	for _, tag := range tags {
+		if strings.HasPrefix(tag.Name, "secret_") {
+			t.Fatalf("non-public tag leaked from query: %+v", tag)
+		}
+	}
+	categoryTags, err := store.PublicTagSuggestions(ctx, "-artist:needle")
+	if err != nil || len(categoryTags) != 1 || categoryTags[0].Category != "artist" {
+		t.Fatalf("negative category suggestion = %+v err=%v; want only artist tag", categoryTags, err)
+	}
+	hiddenTags, err := store.PublicTagSuggestions(ctx, "secret")
+	if err != nil || len(hiddenTags) != 0 {
+		t.Fatalf("non-public tags were returned: %+v err=%v", hiddenTags, err)
+	}
+	longTags, err := store.PublicTagSuggestions(ctx, strings.Repeat("a", maxSearchQueryLength+1))
+	if err != nil || len(longTags) != 0 {
+		t.Fatalf("overlong suggestion query returned %+v err=%v", longTags, err)
 	}
 }

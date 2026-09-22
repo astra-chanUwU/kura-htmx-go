@@ -31,6 +31,9 @@ func TestBrowseSearchSortAndHTMXPreserveContext(t *testing.T) {
 	if !strings.Contains(body, `data-tag-categories`) || !strings.Contains(body, `data-tag-categories open`) || !strings.Contains(body, `>Filter by tags</summary>`) {
 		t.Fatalf("browse tag categories lack disclosure grouping: status=%d body=%s", page.Code, body)
 	}
+	if !strings.Contains(body, `<form class="searchbar" action="/posts">`) || !strings.Contains(body, `data-tag-suggest-url="/tags/public-suggest"`) || !strings.Contains(body, `aria-controls="public-tag-suggestions"`) {
+		t.Fatalf("browse search does not expose public tag suggestions with ordinary GET fallback: status=%d body=%s", page.Code, body)
+	}
 	detail := searchRequest(t, server.Handler(), "/posts/1?context=browse&q="+query+"&sort=oldest", false)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "sort=oldest") {
 		t.Fatalf("post context did not preserve oldest sort: status=%d body=%s", detail.Code, detail.Body.String())

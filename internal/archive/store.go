@@ -504,6 +504,57 @@ func (s *Store) TagSuggestions(ctx context.Context, actor User, query string) ([
 	return out, rows.Err()
 }
 
+// PublicTagSuggestions returns tags that are attached to at least one visible published post.
+func (s *Store) PublicTagSuggestions(ctx context.Context, query string) ([]Tag, error) {
+	if len(query) > maxSearchQueryLength {
+		return []Tag{}, nil
+	}
+	needle, category := publicTagSuggestionNeedle(query)
+	if needle == "" {
+		return []Tag{}, nil
+	}
+	sqlQuery := `SELECT t.id,t.name,t.display_name,t.category FROM tags t WHERE t.name LIKE ? ESCAPE '\' AND EXISTS (
+		SELECT 1 FROM post_tags pt JOIN posts p ON p.id=pt.post_id
+		WHERE pt.tag_id=t.id AND p.status='published' AND p.deleted_at IS NULL AND p.quarantined_at IS NULL
+	)`
+	args := []any{escapeLike(needle) + "%"}
+	if category != "" {
+		sqlQuery += ` AND t.category=?`
+		args = append(args, category)
+	}
+	sqlQuery += ` ORDER BY CASE WHEN t.name=? THEN 0 ELSE 1 END,t.name LIMIT ?`
+	args = append(args, needle, tagSuggestionLimit)
+	rows, err := s.DB.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tag
+	for rows.Next() {
+		var tag Tag
+		if err = rows.Scan(&tag.ID, &tag.Name, &tag.DisplayName, &tag.Category); err != nil {
+			return nil, err
+		}
+		out = append(out, tag)
+	}
+	return out, rows.Err()
+}
+
+func publicTagSuggestionNeedle(query string) (string, string) {
+	fields := strings.Fields(strings.ToLower(query))
+	if len(fields) == 0 {
+		return "", ""
+	}
+	token := strings.TrimPrefix(fields[len(fields)-1], "-")
+	category, token, explicit := tagCategoryPrefix(token)
+	token = strings.Trim(token, "#, ")
+	token = slugCleanup.ReplaceAllString(token, "_")
+	if !explicit {
+		category = ""
+	}
+	return strings.TrimLeft(token, "_"), category
+}
+
 func tagSuggestionNeedle(query string) (string, string) {
 	fields := strings.Fields(strings.ToLower(query))
 	if len(fields) == 0 {

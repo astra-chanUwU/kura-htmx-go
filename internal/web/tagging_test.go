@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -67,7 +68,7 @@ func TestTagSuggestionsAreEditorOnlyBoundedAndCategoryAware(t *testing.T) {
 	moderatorSession, _ := store.NewSession(ctx, &moderator.ID)
 	allowed := sessionRequest(t, handler, http.MethodGet, "/tags/suggest?q=needle", nil, moderatorSession)
 	body := allowed.Body.String()
-	if allowed.Code != http.StatusOK || !strings.Contains(body, "needle_00") || !strings.Contains(body, "meta") {
+	if allowed.Code != http.StatusOK || allowed.Header().Get("Cache-Control") != "private, no-store" || !strings.Contains(body, "needle_00") || !strings.Contains(body, "meta") {
 		t.Fatalf("moderator suggestions missing expected category-aware result: status=%d body=%s", allowed.Code, body)
 	}
 	if got := strings.Count(body, `role="option"`); got > 8 {
@@ -76,6 +77,90 @@ func TestTagSuggestionsAreEditorOnlyBoundedAndCategoryAware(t *testing.T) {
 	category := sessionRequest(t, handler, http.MethodGet, "/tags/suggest?q=artist:needle", nil, moderatorSession)
 	if category.Code != http.StatusOK || !strings.Contains(category.Body.String(), "needle_artist") || strings.Contains(category.Body.String(), "needle_00") {
 		t.Fatalf("category-prefixed suggestions were not scoped: status=%d body=%s", category.Code, category.Body.String())
+	}
+}
+
+func TestPublicTagSuggestionsOnlyExposePublishedVisibleTags(t *testing.T) {
+	server, store := testServer(t)
+	ctx := context.Background()
+	admin, err := store.BootstrapSuperAdmin(ctx, "public-suggest-admin", "public suggest admin password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := store.Register(ctx, "public-suggest-viewer", "public suggest viewer password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		_, err = store.CreatePost(ctx, admin, archive.NewPost{
+			Status: "published", OriginalPath: fmt.Sprintf("originals/public-suggest-%02d.png", i), ThumbnailPath: fmt.Sprintf("thumbs/public-suggest-%02d.jpg", i),
+			MIMEType: "image/png", Width: 1, Height: 1, ByteSize: 1, SHA256: fmt.Sprintf("public-suggest-%02d", i), Tags: []string{fmt.Sprintf("meta:needle_%02d", i)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, item := range []struct {
+		name, status         string
+		quarantined, deleted bool
+	}{
+		{name: "draft_secret", status: "draft"},
+		{name: "quarantined_secret", status: "published", quarantined: true},
+		{name: "deleted_secret", status: "published", deleted: true},
+	} {
+		post, createErr := store.CreatePost(ctx, admin, archive.NewPost{
+			Status: item.status, OriginalPath: "originals/" + item.name + ".png", ThumbnailPath: "thumbs/" + item.name + ".jpg",
+			MIMEType: "image/png", Width: 1, Height: 1, ByteSize: 1, SHA256: item.name, Tags: []string{"character:" + item.name},
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if item.quarantined {
+			if _, updateErr := store.DB.Exec(`UPDATE posts SET quarantined_at=CURRENT_TIMESTAMP WHERE id=?`, post.ID); updateErr != nil {
+				t.Fatal(updateErr)
+			}
+		}
+		if item.deleted {
+			if _, updateErr := store.DB.Exec(`UPDATE posts SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, post.ID); updateErr != nil {
+				t.Fatal(updateErr)
+			}
+		}
+	}
+	_, err = store.CreatePost(ctx, admin, archive.NewPost{
+		Status: "published", OriginalPath: "originals/public-artist.png", ThumbnailPath: "thumbs/public-artist.jpg",
+		MIMEType: "image/png", Width: 1, Height: 1, ByteSize: 1, SHA256: "public-artist", Tags: []string{"artist:needle_artist"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := server.Handler()
+	publicRequest := httptest.NewRequest(http.MethodGet, "/tags/public-suggest?q=needle", nil)
+	public := httptest.NewRecorder()
+	handler.ServeHTTP(public, publicRequest)
+	if public.Code != http.StatusOK || public.Header().Get("Cache-Control") != "private, no-store" || !strings.Contains(public.Body.String(), "needle_00") || strings.Count(public.Body.String(), `role="option"`) != 8 {
+		t.Fatalf("public suggestions missing or not bounded: status=%d body=%s", public.Code, public.Body.String())
+	}
+	viewerSession, _ := store.NewSession(ctx, &viewer.ID)
+	viewerResponse := sessionRequest(t, handler, http.MethodGet, "/tags/public-suggest?q=needle", nil, viewerSession)
+	if viewerResponse.Code != http.StatusOK || !strings.Contains(viewerResponse.Body.String(), "needle_00") {
+		t.Fatalf("viewer could not use public suggestions: status=%d body=%s", viewerResponse.Code, viewerResponse.Body.String())
+	}
+	categoryRequest := httptest.NewRequest(http.MethodGet, "/tags/public-suggest?q=-artist:needle", nil)
+	category := httptest.NewRecorder()
+	handler.ServeHTTP(category, categoryRequest)
+	if category.Code != http.StatusOK || !strings.Contains(category.Body.String(), "needle_artist") || strings.Contains(category.Body.String(), "needle_00") {
+		t.Fatalf("negative category prefix was not scoped: status=%d body=%s", category.Code, category.Body.String())
+	}
+	hiddenRequest := httptest.NewRequest(http.MethodGet, "/tags/public-suggest?q=secret", nil)
+	hidden := httptest.NewRecorder()
+	handler.ServeHTTP(hidden, hiddenRequest)
+	if hidden.Code != http.StatusOK || strings.Contains(hidden.Body.String(), "secret") {
+		t.Fatalf("non-public tags leaked through suggestions: status=%d body=%s", hidden.Code, hidden.Body.String())
+	}
+	viewerEditor := sessionRequest(t, handler, http.MethodGet, "/tags/suggest?q=needle", nil, viewerSession)
+	if viewerEditor.Code != http.StatusForbidden {
+		t.Fatalf("viewer gained access to editor suggestions: status=%d body=%s", viewerEditor.Code, viewerEditor.Body.String())
 	}
 }
 

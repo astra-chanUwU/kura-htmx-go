@@ -219,6 +219,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /posts/bulk-tags/preview", s.previewBulkTags)
 	mux.HandleFunc("POST /posts/bulk-tags/apply", s.applyBulkTags)
 	mux.HandleFunc("GET /tags/suggest", s.tagSuggestions)
+	mux.HandleFunc("GET /tags/public-suggest", s.publicTagSuggestions)
 	mux.HandleFunc("GET /posts/{id}", s.post)
 	mux.HandleFunc("GET /posts/{id}/download", s.download)
 	mux.HandleFunc("POST /posts/{id}/favorite", s.favorite)
